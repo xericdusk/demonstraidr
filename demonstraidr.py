@@ -949,22 +949,19 @@ def main():
     with tab2:
         st.header("RAIDR Tactical SIGINT Interface")
         if 'selected_scan_data' in locals() and selected_scan_data:
-            # Use the limited context function with the max_signals parameter from the slider
             context = prepare_llm_context(selected_scan_data, max_signals_per_scan=max_signals)
             
-            # Use session state to persist and clear the query
             if 'tactical_query' not in st.session_state:
                 st.session_state.tactical_query = ""
             
-            col_query, col_clear = st.columns([3, 1])  # Split into two columns
+            col_query, col_clear = st.columns([3, 1])
             with col_query:
-                query = st.text_input("Enter tactical query:", value=st.session_state.tactical_query, key="text_query", help="Click the 'x' in the box or 'New Entry' to clear.")
+                query = st.text_input("Enter tactical query:", value=st.session_state.tactical_query, key="text_query")
             with col_clear:
                 if st.button("New Entry"):
-                    st.session_state.tactical_query = ""  # Clear the query
-                    st.rerun()  # Rerun to update the text input
+                    st.session_state.tactical_query = ""
+                    st.rerun()
             
-            # Update session state with the current query
             if query != st.session_state.tactical_query:
                 st.session_state.tactical_query = query
             
@@ -976,7 +973,6 @@ def main():
                 if st.button("Send Query"):
                     if query:
                         with st.spinner(f"RAIDR processing with {selected_model}..."):
-                            # Call with just query and context - no model parameter
                             response = query_chatgpt(query, context)
                             st.session_state.last_response = response
                             st.session_state.show_response = True
@@ -987,24 +983,17 @@ def main():
                         if voice_query:
                             st.success(f"Voice query detected: \"{voice_query}\"")
                             with st.spinner(f"RAIDR processing with {selected_model}..."):
-                                # Call with just query and context - no model parameter
                                 response = query_chatgpt(voice_query, context)
                                 st.session_state.last_response = response
                                 st.session_state.show_response = True
             
             if st.session_state.get('show_response', False):
                 st.subheader("RAIDR Response:")
-                # Create a container for the response with a "Send to Advanced Analysis" button
                 response_container = st.container()
                 with response_container:
-                    # Display the response
-                    st.markdown(f'<div class="tactical-text">{st.session_state.last_response}</div>', unsafe_allow_html=True)
-                    
-                    # Add "Send to Advanced Analysis" button
+                    st.markdown(f'<div class="tactical-text">{ st.session_state.last_response}</div>', unsafe_allow_html=True)
                     if st.button("Send to Advanced Analysis"):
-                        # Store the response to display in the advanced analysis tab
                         st.session_state.advanced_analysis_data['tactical_response'] = st.session_state.last_response
-                        # Set active tab to Advanced Analysis
                         st.session_state.active_tab = 2
                         st.rerun()
                 
@@ -1024,48 +1013,32 @@ def main():
     with tab3:
         st.header("Advanced SIGINT Analysis")
         if 'selected_scan_data' in locals() and selected_scan_data:
-            # Use the limited context function with the max_signals parameter from the slider
             context = prepare_llm_context(selected_scan_data, max_signals_per_scan=max_signals)
             
-            # Check if we have data transferred from tactical tab
             if st.session_state.advanced_analysis_data['tactical_response']:
                 tactical_resp = st.session_state.advanced_analysis_data['tactical_response']
                 
-                # Display the tactical response
                 st.subheader("Tactical SIGINT Response:")
                 st.markdown(f'<div class="tactical-text">{tactical_resp}</div>', unsafe_allow_html=True)
                 
-                # Add question field
                 st.subheader("Add a question about this response:")
                 additional_question = st.text_area("Your question:", height=100)
                 
                 if st.button("Analyze This"):
                     if additional_question:
-                        # Combine tactical response with the additional question
                         combined_query = f"RAIDR provided this tactical response:\n\n{tactical_resp}\n\nMy question about this: {additional_question}"
-                        
                         with st.spinner("Analyzing..."):
-                            # Get advanced analysis
                             analysis_response = query_advanced_analysis(combined_query, context)
-                            
-                            # Add to chat history
                             st.session_state.advanced_chat_history.append({"role": "user", "content": combined_query})
                             st.session_state.advanced_chat_history.append({"role": "assistant", "content": analysis_response})
-                            
-                            # Clear the transferred data after processing
                             st.session_state.advanced_analysis_data['tactical_response'] = ''
-                            
-                        # Rerun to display updated chat
                         st.rerun()
                 
                 if st.button("Cancel"):
-                    # Clear the transferred data
                     st.session_state.advanced_analysis_data['tactical_response'] = ''
                     st.rerun()
             
             else:
-                # Standard chat interface when no tactical data is transferred
-                # Display chat history
                 chat_container = st.container()
                 with chat_container:
                     for message in st.session_state.advanced_chat_history:
@@ -1074,27 +1047,16 @@ def main():
                         else:
                             st.markdown(f'<div class="message ai-message">{message["content"]}</div>', unsafe_allow_html=True)
                 
-                # User input
-                advanced_query = st.text_area("Ask your SIGINT analysis question:", height=100, 
-                                             help="Enter your question about the scan data for in-depth analysis.")
+                advanced_query = st.text_area("Ask your SIGINT analysis question:", height=100)
                 
-                # Send button
                 if st.button("Send for Analysis"):
                     if advanced_query:
-                        # Add user message to chat history
                         st.session_state.advanced_chat_history.append({"role": "user", "content": advanced_query})
-                        
                         with st.spinner("Analyzing..."):
-                            # Get response from GPT-4 Turbo with simple SIGINT analyst prompt
                             advanced_response = query_advanced_analysis(advanced_query, context)
-                            
-                            # Add AI response to chat history
                             st.session_state.advanced_chat_history.append({"role": "assistant", "content": advanced_response})
-                        
-                        # Rerun to display updated chat
                         st.rerun()
             
-            # Clear chat button always visible
             if st.button("Clear Conversation History"):
                 st.session_state.advanced_chat_history = []
                 st.rerun()
@@ -1117,25 +1079,4 @@ if 'show_response' not in st.session_state:
     st.session_state.show_response = False
 
 if __name__ == "__main__":
-    main()freq, power), xytext=(0, 10), textcoords='offset points', ha='center')
-        
-        freq_range = scan_data.get("frequency_range", [0, 0])
-        ax.set_xlim(freq_range[0] / 1e6, freq_range[1] / 1e6)
-        ax.set_xlabel('Frequency (MHz)')
-        ax.set_ylabel('Power (dBm)')
-        ax.set_title(f'RF Spectrum: {scan_data.get("timestamp", "Unknown")}')
-        ax.grid(True, alpha=0.3)
-    else:
-        fig, ax = plt.subplots(figsize=(10, 5))
-        freq_axis = np.array(scan_data.get("freq_axis", []))
-        psd = np.array(scan_data.get("psd", []))
-        freq_mhz = freq_axis / 1e6
-        ax.plot(freq_mhz, 10 * np.log10(psd), 'b-', linewidth=1)
-        signals = scan_data.get("detected_signals", [])
-        for signal in signals:
-            freq = signal.get("frequency", 0) / 1e6
-            power = signal.get("power_dbm", -100)
-            label = signal.get("type", "unknown")
-            color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
-            ax.plot(freq, power, 'o', markersize=8, color=color)
-            ax.annotate(label, (
+    main()
