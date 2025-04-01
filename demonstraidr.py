@@ -82,7 +82,8 @@ def download_file_from_google_drive(file_url):
     except Exception as e:
         st.error(f"Error downloading file from Google Drive: {str(e)}")
         return None, None, None
-    def process_waterfall_image(image_data):
+    
+def process_waterfall_image(image_data):
     try:
         # Convert uploaded image to OpenCV format
         file_bytes = np.asarray(bytearray(image_data.read()), dtype=np.uint8)
