@@ -1,22 +1,4 @@
-def process_iq_data(iq_data, center_freq, sample_rate):
-    freqs, psd = signal.welch(iq_data, fs=sample_rate, nperseg=1024, scaling='spectrum')
-    freq_axis = freqs + (center_freq - sample_rate/2)
-    peaks, _ = signal.find_peaks(psd, height=np.mean(psd)*3, distance=10)
-    detected_signals = []
-    for peak in peaks:
-        peak_freq = freq_axis[peak]
-        peak_power = 10 * np.log10(psd[peak])
-        bw = estimate_bandwidth(psd, peak, sample_rate, len(psd))
-        signal_type = classify_signal(peak_freq, bw)
-        detected_signals.append({
-            "frequency": float(peak_freq),
-            "power_dbm": float(peak_power),
-            "bandwidth": float(bw),
-            "type": signal_type["type"],
-            "threat_level": signal_type["threat_level"],
-            "confidence": signal_type["confidence"]
-        })
-    return {"freq_axis": freq_axis.tolist(), "psd": psd.tolist(), "detected_signals": detected_signals}import streamlit as st
+import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -130,6 +112,76 @@ def download_file_from_google_drive(file_url):
     except Exception as e:
         st.error(f"Error downloading file from Google Drive: {str(e)}")
         return None, None, None
+
+def check_file_header(file, header_bytes):
+    """Check if a file starts with the given bytes."""
+    try:
+        file.seek(0)
+        file_start = file.read(len(header_bytes))
+        file.seek(0)
+        return file_start == header_bytes
+    except Exception as e:
+        # Print debug info
+        print(f"Error checking file header: {str(e)}")
+        return False
+
+def process_json_array_signals(json_data):
+    """Process a JSON array of signal data with centerFreq and other fields."""
+    try:
+        detected_signals = []
+        
+        # Check if it's an array of signals
+        if isinstance(json_data, list):
+            # Set timestamp from the first signal if available
+            timestamp = "Unknown"
+            if len(json_data) > 0 and "time" in json_data[0]:
+                timestamp = json_data[0]["time"]
+            
+            # Find frequency limits
+            min_freq = float('inf')
+            max_freq = float('-inf')
+            
+            for signal in json_data:
+                # Extract necessary fields with proper key names
+                freq = signal.get("centerFreq(Hz)", signal.get("frequency", signal.get("freq", 0)))
+                bandwidth = signal.get("bandwidth(Hz)", signal.get("bandwidth", 1e6))
+                power = signal.get("peakLevel(dBm)", signal.get("power_dbm", signal.get("power", -100)))
+                
+                # Update frequency range
+                if freq < min_freq:
+                    min_freq = freq
+                if freq > max_freq:
+                    max_freq = freq
+                
+                # Classify signal
+                signal_type = classify_signal(freq, bandwidth)
+                
+                # Add to detected signals list
+                detected_signals.append({
+                    "frequency": float(freq),
+                    "power_dbm": float(power),
+                    "bandwidth": float(bandwidth),
+                    "type": signal_type["type"],
+                    "threat_level": signal_type["threat_level"],
+                    "confidence": signal_type["confidence"]
+                })
+            
+            # Ensure we have valid frequency range
+            if min_freq == float('inf'):
+                min_freq = 0
+            if max_freq == float('-inf'):
+                max_freq = 0
+                
+            return {
+                "timestamp": timestamp,
+                "frequency_range": [min_freq, max_freq],
+                "detected_signals": detected_signals,
+                "is_signal_array": True
+            }
+        return {}
+    except Exception as e:
+        st.error(f"Error processing JSON array signals: {str(e)}")
+        return {}
 
 def process_csv_file(csv_file):
     """Process a CSV file containing signal data."""
@@ -410,75 +462,25 @@ def load_scan_file(uploaded_file):
             "is_csv": False
         }
 
-def check_file_header(file, header_bytes):
-    """Check if a file starts with the given bytes."""
-    try:
-        file.seek(0)
-        file_start = file.read(len(header_bytes))
-        file.seek(0)
-        return file_start == header_bytes
-    except Exception as e:
-        # Print debug info
-        print(f"Error checking file header: {str(e)}")
-        return False
-
-def process_json_array_signals(json_data):
-    """Process a JSON array of signal data with centerFreq and other fields."""
-    try:
-        detected_signals = []
-        
-        # Check if it's an array of signals
-        if isinstance(json_data, list):
-            # Set timestamp from the first signal if available
-            timestamp = "Unknown"
-            if len(json_data) > 0 and "time" in json_data[0]:
-                timestamp = json_data[0]["time"]
-            
-            # Find frequency limits
-            min_freq = float('inf')
-            max_freq = float('-inf')
-            
-            for signal in json_data:
-                # Extract necessary fields with proper key names
-                freq = signal.get("centerFreq(Hz)", signal.get("frequency", signal.get("freq", 0)))
-                bandwidth = signal.get("bandwidth(Hz)", signal.get("bandwidth", 1e6))
-                power = signal.get("peakLevel(dBm)", signal.get("power_dbm", signal.get("power", -100)))
-                
-                # Update frequency range
-                if freq < min_freq:
-                    min_freq = freq
-                if freq > max_freq:
-                    max_freq = freq
-                
-                # Classify signal
-                signal_type = classify_signal(freq, bandwidth)
-                
-                # Add to detected signals list
-                detected_signals.append({
-                    "frequency": float(freq),
-                    "power_dbm": float(power),
-                    "bandwidth": float(bandwidth),
-                    "type": signal_type["type"],
-                    "threat_level": signal_type["threat_level"],
-                    "confidence": signal_type["confidence"]
-                })
-            
-            # Ensure we have valid frequency range
-            if min_freq == float('inf'):
-                min_freq = 0
-            if max_freq == float('-inf'):
-                max_freq = 0
-                
-            return {
-                "timestamp": timestamp,
-                "frequency_range": [min_freq, max_freq],
-                "detected_signals": detected_signals,
-                "is_signal_array": True
-            }
-        return {}
-    except Exception as e:
-        st.error(f"Error processing JSON array signals: {str(e)}")
-        return {}
+def process_iq_data(iq_data, center_freq, sample_rate):
+    freqs, psd = signal.welch(iq_data, fs=sample_rate, nperseg=1024, scaling='spectrum')
+    freq_axis = freqs + (center_freq - sample_rate/2)
+    peaks, _ = signal.find_peaks(psd, height=np.mean(psd)*3, distance=10)
+    detected_signals = []
+    for peak in peaks:
+        peak_freq = freq_axis[peak]
+        peak_power = 10 * np.log10(psd[peak])
+        bw = estimate_bandwidth(psd, peak, sample_rate, len(psd))
+        signal_type = classify_signal(peak_freq, bw)
+        detected_signals.append({
+            "frequency": float(peak_freq),
+            "power_dbm": float(peak_power),
+            "bandwidth": float(bw),
+            "type": signal_type["type"],
+            "threat_level": signal_type["threat_level"],
+            "confidence": signal_type["confidence"]
+        })
+    return {"freq_axis": freq_axis.tolist(), "psd": psd.tolist(), "detected_signals": detected_signals}
 
 def estimate_bandwidth(psd, peak_idx, sample_rate, n_points):
     peak_power = psd[peak_idx]
@@ -590,11 +592,11 @@ def speech_to_text():
     return ""
 
 def plot_spectrum(scan_data):
-    if scan_data.get("is_waterfall", False) or scan_data.get("is_csv", False):
+    if scan_data.get("is_waterfall", False) or scan_data.get("is_csv", False) or scan_data.get("is_signal_array", False):
         fig, ax = plt.subplots(figsize=(10, 5))
         signals = scan_data.get("detected_signals", [])
         if not signals:
-            st.warning("No signals to plot in waterfall data.")
+            st.warning("No signals to plot in data.")
             return None
         
         freqs = [signal["frequency"] / 1e6 for signal in signals]
@@ -613,7 +615,7 @@ def plot_spectrum(scan_data):
         ax.set_xlim(freq_range[0] / 1e6, freq_range[1] / 1e6)
         ax.set_xlabel('Frequency (MHz)')
         ax.set_ylabel('Power (dBm)')
-        ax.set_title(f'RF Spectrum Waterfall: {scan_data.get("timestamp", "Unknown")}')
+        ax.set_title(f'RF Spectrum: {scan_data.get("timestamp", "Unknown")}')
         ax.grid(True, alpha=0.3)
     else:
         fig, ax = plt.subplots(figsize=(10, 5))
@@ -664,6 +666,8 @@ def get_available_scans(uploaded_files):
                         file_type = "csv"
                     elif scan_data.get("is_waterfall", False):
                         file_type = "json"
+                    elif scan_data.get("is_signal_array", False):
+                        file_type = "json"
                 except Exception:
                     # If we can't read the file content directly
                     file.seek(0)
@@ -680,7 +684,7 @@ def get_available_scans(uploaded_files):
             
             # Calculate center frequency safely
             try:
-                if scan_data.get("is_waterfall") or scan_data.get("is_csv", False):
+                if scan_data.get("is_waterfall") or scan_data.get("is_csv", False) or scan_data.get("is_signal_array", False):
                     freq_range = scan_data.get("frequency_range", [0, 0])
                     if isinstance(freq_range, list) and len(freq_range) > 0:
                         center_freq = freq_range[0] / 1e6
