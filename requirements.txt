@@ -1,7 +1,7 @@
 streamlit
 openai
 pygame
-opencv-python
+opencv-python-headless
 speechrecognition
 scipy
 pandas
