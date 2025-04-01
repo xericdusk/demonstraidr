@@ -33,21 +33,27 @@ except KeyError:
     st.error("OpenAI API key is missing. Please set the OPENAI_API_KEY in Streamlit Cloud secrets.")
     st.stop()
 
-# Load signal database
+# Load comprehensive signal database
 @st.cache_data
 def load_signal_database():
-    basic_db = {
+    return {
         "commercial_drone": {"freq_ranges": [[2.4e9, 2.5e9], [5.7e9, 5.9e9]], "bandwidths": [1e6, 4e6, 8e6, 20e6], "threat_level": "medium"},
-        "wifi": {"freq_ranges": [[2.4e9, 2.5e9], [5.1e9, 5.9e9]], "bandwidths": [20e6, 40e6, 80e6, 160e6], "threat_level": "low"},
+        "wifi": {"freq_ranges": [[2.4e9, 2.5e9], [5.1e9, 5.9e9], [5.925e9, 7.125e9]], "bandwidths": [20e6, 40e6, 80e6, 160e6], "threat_level": "low"},
+        "bluetooth": {"freq_ranges": [[2.4e9, 2.4835e9]], "bandwidths": [1e6], "threat_level": "low"},
+        "lte_cellular": {"freq_ranges": [[700e6, 960e6], [1710e6, 2200e6], [2500e6, 2690e6]], "bandwidths": [1.4e6, 3e6, 5e6, 10e6, 15e6, 20e6], "threat_level": "low"},
+        "5g_nr": {"freq_ranges": [[600e6, 6e9], [24e9, 40e9]], "bandwidths": [5e6, 10e6, 20e6, 50e6, 100e6, 200e6, 400e6], "threat_level": "low"},
         "pmr_radio": {"freq_ranges": [[440e6, 470e6]], "bandwidths": [12.5e3, 25e3], "threat_level": "low"},
-        "cellular": {"freq_ranges": [[700e6, 900e6], [1.7e9, 2.1e9]], "bandwidths": [200e3, 1.4e6, 5e6, 10e6, 20e6], "threat_level": "low"},
-        "military_tactical": {"freq_ranges": [[30e6, 88e6], [225e6, 400e6]], "bandwidths": [25e3, 5e6, 10e6], "threat_level": "high"},
+        "military_vhf_uhf": {"freq_ranges": [[30e6, 88e6], [225e6, 400e6]], "bandwidths": [25e3, 5e6, 10e6], "threat_level": "high"},
         "fm_radio": {"freq_ranges": [[88e6, 108e6]], "bandwidths": [200e3], "threat_level": "low"},
-        "amateur_radio": {"freq_ranges": [[1.8e6, 30e6], [50e6, 54e6], [144e6, 148e6]], "bandwidths": [10e3, 20e3], "threat_level": "low"},
-        "tv_broadcast": {"freq_ranges": [[174e6, 216e6], [470e6, 694e6]], "bandwidths": [6e6], "threat_level": "low"},
-        "gps": {"freq_ranges": [[1575.42e6, 1575.42e6]], "bandwidths": [2e6], "threat_level": "low"}
+        "am_radio": {"freq_ranges": [[535e3, 1605e3]], "bandwidths": [10e3], "threat_level": "low"},
+        "amateur_radio": {"freq_ranges": [[1.8e6, 30e6], [50e6, 54e6], [144e6, 148e6], [420e6, 450e6]], "bandwidths": [10e3, 20e3, 100e3], "threat_level": "low"},
+        "tv_broadcast": {"freq_ranges": [[54e6, 88e6], [174e6, 216e6], [470e6, 698e6]], "bandwidths": [6e6], "threat_level": "low"},
+        "gps": {"freq_ranges": [[1575.42e6, 1575.42e6], [1227.6e6, 1227.6e6]], "bandwidths": [2e6], "threat_level": "low"},
+        "emergency_services": {"freq_ranges": [[150e6, 174e6], [450e6, 470e6]], "bandwidths": [12.5e3, 25e3], "threat_level": "medium"},
+        "radar": {"freq_ranges": [[2.9e9, 3.3e9], [8.5e9, 9.6e9], [33e9, 36e9]], "bandwidths": [10e6, 50e6, 100e6], "threat_level": "high"},
+        "air_traffic_control": {"freq_ranges": [[108e6, 137e6]], "bandwidths": [25e3], "threat_level": "low"},
+        "satcom": {"freq_ranges": [[1.6e9, 1.7e9], [3.6e9, 4.2e9], [7.25e9, 7.75e9], [10.7e9, 12.75e9]], "bandwidths": [1e6, 36e6], "threat_level": "high"}
     }
-    return basic_db
 
 signal_db = load_signal_database()
 
@@ -271,7 +277,6 @@ def classify_signal(frequency, bandwidth):
 
 def text_to_speech(text, voice="onyx"):
     try:
-        # Process text into tactical radio format
         lines = text.split('\n')
         processed_text = "DemonstRAIDR, this is Command. "
         for line in lines:
@@ -280,13 +285,11 @@ def text_to_speech(text, voice="onyx"):
                 processed_text += " Break. "
                 continue
             
-            # Handle frequency lines
             freq_match = re.search(r'(\d+\.\d+|\d+)\s*MHz', line, re.IGNORECASE)
             if freq_match:
                 freq = float(freq_match.group(1))
                 processed_text += f"Frequency {format_frequency(freq)}. "
             else:
-                # Replace standalone numbers with NATO phonetic
                 words = line.split()
                 for i, word in enumerate(words):
                     if re.match(r'^\d+$', word):
@@ -309,7 +312,7 @@ def text_to_speech(text, voice="onyx"):
             "input": processed_text,
             "voice": voice,
             "response_format": "mp3",
-            "speed": 0.9  # Slightly slower for clarity
+            "speed": 0.9
         }
         
         response = requests.post(
@@ -454,8 +457,8 @@ def query_chatgpt(query, context):
                 {"role": "system", "content": "You are a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Use 'Roger,' 'Over,' and 'Out' as needed."},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
             ],
-            max_tokens=200,  # Keep responses brief
-            temperature=0.5  # More predictable, tactical responses
+            max_tokens=200,
+            temperature=0.5
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
