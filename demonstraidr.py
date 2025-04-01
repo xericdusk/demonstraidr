@@ -1,4 +1,22 @@
-import streamlit as st
+def process_iq_data(iq_data, center_freq, sample_rate):
+    freqs, psd = signal.welch(iq_data, fs=sample_rate, nperseg=1024, scaling='spectrum')
+    freq_axis = freqs + (center_freq - sample_rate/2)
+    peaks, _ = signal.find_peaks(psd, height=np.mean(psd)*3, distance=10)
+    detected_signals = []
+    for peak in peaks:
+        peak_freq = freq_axis[peak]
+        peak_power = 10 * np.log10(psd[peak])
+        bw = estimate_bandwidth(psd, peak, sample_rate, len(psd))
+        signal_type = classify_signal(peak_freq, bw)
+        detected_signals.append({
+            "frequency": float(peak_freq),
+            "power_dbm": float(peak_power),
+            "bandwidth": float(bw),
+            "type": signal_type["type"],
+            "threat_level": signal_type["threat_level"],
+            "confidence": signal_type["confidence"]
+        })
+    return {"freq_axis": freq_axis.tolist(), "psd": psd.tolist(), "detected_signals": detected_signals}import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -295,6 +313,14 @@ def load_scan_file(uploaded_file):
             content = uploaded_file.read().decode('utf-8')
             data = json.loads(content)
             
+            # Check if it's a signal array format
+            if isinstance(data, list) and len(data) > 0 and "centerFreq(Hz)" in data[0]:
+                signal_data = process_json_array_signals(data)
+                if signal_data:
+                    result.update(signal_data)
+                    return result
+            
+            # Check if it's a standard format
             if "timestamp_start" in data and "timestamp_end" in data:
                 result.update({
                     "timestamp": f"{data['timestamp_start']} to {data['timestamp_end']}",
@@ -319,6 +345,14 @@ def load_scan_file(uploaded_file):
                     try:
                         content = uploaded_file.read().decode('utf-8')
                         data = json.loads(content)
+                        
+                        # Check if it's a signal array format
+                        if isinstance(data, list) and len(data) > 0 and "centerFreq(Hz)" in data[0]:
+                            signal_data = process_json_array_signals(data)
+                            if signal_data:
+                                result.update(signal_data)
+                                return result
+                        
                         result.update(data)
                         return result
                     except Exception as e:
@@ -388,25 +422,63 @@ def check_file_header(file, header_bytes):
         print(f"Error checking file header: {str(e)}")
         return False
 
-def process_iq_data(iq_data, center_freq, sample_rate):
-    freqs, psd = signal.welch(iq_data, fs=sample_rate, nperseg=1024, scaling='spectrum')
-    freq_axis = freqs + (center_freq - sample_rate/2)
-    peaks, _ = signal.find_peaks(psd, height=np.mean(psd)*3, distance=10)
-    detected_signals = []
-    for peak in peaks:
-        peak_freq = freq_axis[peak]
-        peak_power = 10 * np.log10(psd[peak])
-        bw = estimate_bandwidth(psd, peak, sample_rate, len(psd))
-        signal_type = classify_signal(peak_freq, bw)
-        detected_signals.append({
-            "frequency": float(peak_freq),
-            "power_dbm": float(peak_power),
-            "bandwidth": float(bw),
-            "type": signal_type["type"],
-            "threat_level": signal_type["threat_level"],
-            "confidence": signal_type["confidence"]
-        })
-    return {"freq_axis": freq_axis.tolist(), "psd": psd.tolist(), "detected_signals": detected_signals}
+def process_json_array_signals(json_data):
+    """Process a JSON array of signal data with centerFreq and other fields."""
+    try:
+        detected_signals = []
+        
+        # Check if it's an array of signals
+        if isinstance(json_data, list):
+            # Set timestamp from the first signal if available
+            timestamp = "Unknown"
+            if len(json_data) > 0 and "time" in json_data[0]:
+                timestamp = json_data[0]["time"]
+            
+            # Find frequency limits
+            min_freq = float('inf')
+            max_freq = float('-inf')
+            
+            for signal in json_data:
+                # Extract necessary fields with proper key names
+                freq = signal.get("centerFreq(Hz)", signal.get("frequency", signal.get("freq", 0)))
+                bandwidth = signal.get("bandwidth(Hz)", signal.get("bandwidth", 1e6))
+                power = signal.get("peakLevel(dBm)", signal.get("power_dbm", signal.get("power", -100)))
+                
+                # Update frequency range
+                if freq < min_freq:
+                    min_freq = freq
+                if freq > max_freq:
+                    max_freq = freq
+                
+                # Classify signal
+                signal_type = classify_signal(freq, bandwidth)
+                
+                # Add to detected signals list
+                detected_signals.append({
+                    "frequency": float(freq),
+                    "power_dbm": float(power),
+                    "bandwidth": float(bandwidth),
+                    "type": signal_type["type"],
+                    "threat_level": signal_type["threat_level"],
+                    "confidence": signal_type["confidence"]
+                })
+            
+            # Ensure we have valid frequency range
+            if min_freq == float('inf'):
+                min_freq = 0
+            if max_freq == float('-inf'):
+                max_freq = 0
+                
+            return {
+                "timestamp": timestamp,
+                "frequency_range": [min_freq, max_freq],
+                "detected_signals": detected_signals,
+                "is_signal_array": True
+            }
+        return {}
+    except Exception as e:
+        st.error(f"Error processing JSON array signals: {str(e)}")
+        return {}
 
 def estimate_bandwidth(psd, peak_idx, sample_rate, n_points):
     peak_power = psd[peak_idx]
