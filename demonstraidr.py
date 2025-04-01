@@ -587,10 +587,6 @@ def text_to_speech(text, voice="onyx"):
         st.error(f"Text-to-speech error: {str(e)}")
         return False
 
-def speech_to_text():
-    st.warning("Speech-to-text is not supported in the cloud environment due to microphone access limitations.")
-    return ""
-
 def plot_spectrum(scan_data):
     if scan_data.get("is_waterfall", False) or scan_data.get("is_csv", False) or scan_data.get("is_signal_array", False):
         fig, ax = plt.subplots(figsize=(10, 5))
@@ -614,6 +610,28 @@ def plot_spectrum(scan_data):
         ax.set_ylabel('Power (dBm)')
         center_freq = scan_data.get("center_freq", 0) / 1e6
         ax.set_title(f'RF Spectrum at {center_freq} MHz')
+        ax.grid(True, alpha=0.3)
+    else:
+        # Handle IQ data case
+        fig, ax = plt.subplots(figsize=(10, 5))
+        freq_axis = np.array(scan_data.get("freq_axis", []))
+        psd = np.array(scan_data.get("psd", []))
+        if len(freq_axis) == 0 or len(psd) == 0:
+            st.warning("No frequency or PSD data available for plotting.")
+            return None
+        freq_mhz = freq_axis / 1e6
+        ax.plot(freq_mhz, 10 * np.log10(psd), 'b-', linewidth=1)
+        signals = scan_data.get("detected_signals", [])
+        for signal in signals:
+            freq = signal.get("frequency", 0) / 1e6
+            power = signal.get("power_dbm", -100)
+            label = signal.get("type", "unknown")
+            color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
+            ax.plot(freq, power, 'o', markersize=8, color=color)
+            ax.annotate(label, (freq, power), xytext=(0, 10), textcoords='offset points', ha='center')
+        ax.set_xlabel('Frequency (MHz)')
+        ax.set_ylabel('Power (dBm)')
+        ax.set_title(f'RF Spectrum: {scan_data.get("timestamp", "Unknown")}')
         ax.grid(True, alpha=0.3)
     
     buf = BytesIO()
