@@ -789,10 +789,17 @@ def main():
         model_options = ["gpt-3.5-turbo", "gpt-4-turbo"]
         selected_model = st.selectbox("Select AI Model", model_options, index=1)
         
-        # Signal limit slider
-        max_signals = st.slider("Max signals to include in analysis", 
-                               min_value=5, max_value=100, value=25, step=5,
-                               help="Limit the number of signals sent to AI to avoid token limit issues")
+        # Signal limit slider with "All" option
+        limit_signals = st.checkbox("Limit number of signals for analysis", value=True, 
+                                   help="Limit signals to avoid token limits. Uncheck to include all signals (may cause errors with large datasets)")
+        
+        if limit_signals:
+            max_signals = st.slider("Max signals to include per scan", 
+                                   min_value=5, max_value=100, value=25, step=5,
+                                   help="Limit the number of signals sent to AI to avoid token limit issues")
+        else:
+            max_signals = 10000  # A very large number that effectively means "all signals"
+            st.info("Including all signals. This may exceed token limits with large datasets.")
         
         uploaded_files = []
         
