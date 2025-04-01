@@ -278,7 +278,7 @@ def classify_signal(frequency, bandwidth):
 def text_to_speech(text, voice="onyx"):
     try:
         lines = text.split('\n')
-        processed_text = "DemonstRAIDR, this is Command. "
+        processed_text = "DemonstRAIDR, this is RAIDR. "  # Changed "Command" to "RAIDR"
         for line in lines:
             line = line.strip()
             if not line:
@@ -298,7 +298,7 @@ def text_to_speech(text, voice="onyx"):
                         words[i] = " ".join(nato_numbers[c] if c in nato_numbers else "Point" if c == '.' else c for c in word)
                 processed_text += " ".join(words) + ". "
         
-        processed_text += "Roger. Out."
+        processed_text += "Over and Out."  # Changed "Roger. Out." to "Over and Out"
         
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
@@ -425,7 +425,7 @@ def get_available_scans(uploaded_files):
 
 def prepare_llm_context(selected_scan_data):
     """Prepare context for the LLM in tactical radio format."""
-    context = "DemonstRAIDR, this is Command. SIGINT report follows.\n"
+    context = "DemonstRAIDR, this is RAIDR. SIGINT report follows.\n"  # Changed "Command" to "RAIDR"
     for scan in selected_scan_data:
         scan_data = scan["scan_data"]
         context += f"Scan ID: {format_number(scan['id'])}. "
@@ -444,7 +444,7 @@ def prepare_llm_context(selected_scan_data):
                 context += f"Confidence {signal.get('confidence', 0):.1f}. Break. "
         else:
             context += "No signals detected. Break. "
-    context += "Over."
+    context += "Over and Out."  # Changed "Over" to "Over and Out"
     return context
 
 def query_chatgpt(query, context):
@@ -454,7 +454,7 @@ def query_chatgpt(query, context):
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Use 'Roger,' 'Over,' and 'Out' as needed."},
+                {"role": "system", "content": "You are RAIDR, a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Identify yourself as 'RAIDR' and end with 'Over and Out'."},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
             ],
             max_tokens=200,
@@ -463,7 +463,7 @@ def query_chatgpt(query, context):
         return response.choices[0].message.content.strip()
     except Exception as e:
         st.error(f"Error querying ChatGPT: {str(e)}")
-        return "Unable to process query. Out."
+        return "DemonstRAIDR, this is RAIDR. Unable to process query. Over and Out."
 
 def main():
     st.markdown("""
