@@ -705,23 +705,41 @@ def get_available_scans(uploaded_files):
             })
     return scans
 
-def prepare_llm_context(selected_scan_data):
-    """Prepare context for the LLM in tactical radio format."""
+def prepare_llm_context(selected_scan_data, max_signals_per_scan=25):
+    """Prepare context for the LLM in tactical radio format with limits to avoid token issues."""
     context = "SIGINT report follows. "
     for scan in selected_scan_data:
         scan_data = scan["scan_data"]
         context += f"Scan ID: {format_number(scan['id'])}. "
         context += f"Time: {scan['timestamp']}. "
         signals = scan_data.get("detected_signals", [])
-        if signals:
-            context += "Signals detected. "
-            for signal in signals:
+        
+        # Sort by threat level: high -> medium -> low -> unknown
+        sorted_signals = sorted(
+            signals, 
+            key=lambda x: {
+                "high": 0,
+                "medium": 1,
+                "low": 2
+            }.get(x.get("threat_level", "unknown"), 3)
+        )
+        
+        # Limit the number of signals per scan
+        limited_signals = sorted_signals[:max_signals_per_scan]
+        
+        if limited_signals:
+            total_count = len(signals)
+            showing_count = len(limited_signals)
+            context += f"Signals detected: {showing_count} of {total_count} shown, prioritized by threat level. "
+            
+            for signal in limited_signals:
                 freq_mhz = signal.get('frequency', 0) / 1e6
                 context += f"Frequency {format_frequency(freq_mhz)}. "
                 context += f"Type {signal.get('type', 'unknown')}. "
                 context += f"Threat {signal.get('threat_level', 'unknown')}. Break. "
         else:
             context += "No signals detected. Break. "
+    
     return context
 
 def query_chatgpt(query, context):
@@ -729,12 +747,12 @@ def query_chatgpt(query, context):
     try:
         client = openai.OpenAI(api_key=openai.api_key)
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4-turbo",  # Changed from gpt-3.5-turbo to gpt-4-turbo
             messages=[
                 {"role": "system", "content": "You are RAIDR (pronounced 'Raider'), a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Do not start with 'This is RAIDR' or end with 'Over and Out'."},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
             ],
-            max_tokens=200,
+            max_tokens=500,  # Increased max tokens for response
             temperature=0.5
         )
         return response.choices[0].message.content.strip()
@@ -766,6 +784,15 @@ def main():
         
         st.subheader("Upload Local Scan File")
         uploaded_file = st.file_uploader("Choose a file", type=["png", "json", "jsonl", "csv"], key="file_uploader")
+        
+        # Model selection dropdown
+        model_options = ["gpt-3.5-turbo", "gpt-4-turbo"]
+        selected_model = st.selectbox("Select AI Model", model_options, index=1)
+        
+        # Signal limit slider
+        max_signals = st.slider("Max signals to include in analysis", 
+                               min_value=5, max_value=100, value=25, step=5,
+                               help="Limit the number of signals sent to AI to avoid token limit issues")
         
         uploaded_files = []
         
@@ -834,6 +861,17 @@ def main():
                     return 'color: red; font-weight: bold' if val == "high" else 'color: orange; font-weight: bold' if val == "medium" else 'color: green' if val == "low" else ''
                 styled_df = signals_df.style.applymap(highlight_threats, subset=["Threat Level"])
                 st.dataframe(styled_df, use_container_width=True)
+                
+                # Show signal statistics
+                st.subheader("Signal Statistics")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    threat_counts = signals_df["Threat Level"].value_counts()
+                    st.metric("High Threat Signals", threat_counts.get("high", 0))
+                with col2:
+                    st.metric("Medium Threat Signals", threat_counts.get("medium", 0))
+                with col3:
+                    st.metric("Low Threat Signals", threat_counts.get("low", 0))
             else:
                 st.info("No signals detected in this scan.")
         else:
@@ -842,7 +880,8 @@ def main():
     with tab2:
         st.header("RAIDR Tactical SIGINT Interface")
         if 'selected_scan_data' in locals() and selected_scan_data:
-            context = prepare_llm_context(selected_scan_data)
+            # Use the limited context function with the max_signals parameter from the slider
+            context = prepare_llm_context(selected_scan_data, max_signals_per_scan=max_signals)
             
             # Use session state to persist and clear the query
             if 'tactical_query' not in st.session_state:
@@ -867,8 +906,9 @@ def main():
             with col1:
                 if st.button("Send Query"):
                     if query:
-                        with st.spinner("RAIDR processing..."):
-                            response = query_chatgpt(query, context)
+                        with st.spinner(f"RAIDR processing with {selected_model}..."):
+                            # Pass the selected model to the query function
+                            response = query_chatgpt(query, context, model=selected_model)
                             st.session_state.last_response = response
                             st.session_state.show_response = True
             with col2:
@@ -877,8 +917,9 @@ def main():
                         voice_query = speech_to_text()
                         if voice_query:
                             st.success(f"Voice query detected: \"{voice_query}\"")
-                            with st.spinner("RAIDR processing..."):
-                                response = query_chatgpt(voice_query, context)
+                            with st.spinner(f"RAIDR processing with {selected_model}..."):
+                                # Pass the selected model to the query function
+                                response = query_chatgpt(voice_query, context, model=selected_model)
                                 st.session_state.last_response = response
                                 st.session_state.show_response = True
             
@@ -887,6 +928,12 @@ def main():
                 st.markdown(f'<div class="tactical-text">{st.session_state.last_response}</div>', unsafe_allow_html=True)
                 if st.button("Speak Response"):
                     text_to_speech(st.session_state.last_response, selected_voice)
+                    
+            with st.expander("Signal Summary"):
+                signals_count = sum(len(scan["scan_data"].get("detected_signals", [])) for scan in selected_scan_data)
+                included_count = min(signals_count, max_signals * len(selected_scan_data))
+                st.info(f"Total signals: {signals_count}, including {included_count} in AI analysis (limited for performance)")
+                
             with st.expander("Raw Spectrum Data Context"):
                 st.text(context)
         else:
