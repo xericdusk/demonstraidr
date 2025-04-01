@@ -278,7 +278,7 @@ def classify_signal(frequency, bandwidth):
 def text_to_speech(text, voice="onyx"):
     try:
         lines = text.split('\n')
-        processed_text = "This is RAIDR. "  # Simplified to "This is RAIDR"
+        processed_text = "This is RAIDR. "  # Only once at the start
         for line in lines:
             line = line.strip()
             if not line:
@@ -298,7 +298,7 @@ def text_to_speech(text, voice="onyx"):
                         words[i] = " ".join(nato_numbers[c] if c in nato_numbers else "Point" if c == '.' else c for c in word)
                 processed_text += " ".join(words) + ". "
         
-        processed_text += " Over and Out."  # Single "Over and Out" at the end
+        processed_text += " Over and Out."  # Only once at the end
         
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
@@ -424,8 +424,8 @@ def get_available_scans(uploaded_files):
     return scans
 
 def prepare_llm_context(selected_scan_data):
-    """Prepare context for the LLM in tactical radio format without bandwidth or power."""
-    context = "This is RAIDR. SIGINT report follows.\n"  # Simplified to "This is RAIDR"
+    """Prepare context for the LLM in tactical radio format without repetition."""
+    context = "This is RAIDR. SIGINT report follows. "  # Only once at the start
     for scan in selected_scan_data:
         scan_data = scan["scan_data"]
         context += f"Scan ID: {format_number(scan['id'])}. "
@@ -440,17 +440,17 @@ def prepare_llm_context(selected_scan_data):
                 context += f"Threat {signal.get('threat_level', 'unknown')}. Break. "
         else:
             context += "No signals detected. Break. "
-    context += "Over and Out."  # Single "Over and Out" at the end
+    context += "Over and Out."  # Only once at the end
     return context
 
 def query_chatgpt(query, context):
-    """Query OpenAI's ChatGPT with tactical radio style response."""
+    """Query OpenAI's ChatGPT with tactical radio style response without repetition."""
     try:
         client = openai.OpenAI(api_key=openai.api_key)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are RAIDR, a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Identify yourself as 'RAIDR' with 'This is RAIDR' and end with 'Over and Out' once."},
+                {"role": "system", "content": "You are RAIDR (pronounced 'Raider'), a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Start with 'This is RAIDR' once and end with 'Over and Out' once."},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
             ],
             max_tokens=200,
@@ -475,7 +475,7 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    st.markdown('<h1 class="tactical-header">RAIDR: Tactical SIGINT Analyst</h1>', unsafe_allow_html=True)  # Updated title to "RAIDR"
+    st.markdown('<h1 class="tactical-header">RAIDR: Tactical SIGINT Analyst</h1>', unsafe_allow_html=True)
     
     with st.sidebar:
         st.header("Scan Controls")
