@@ -278,7 +278,7 @@ def classify_signal(frequency, bandwidth):
 def text_to_speech(text, voice="onyx"):
     try:
         lines = text.split('\n')
-        processed_text = "This is RAIDR. "  # Only once at the start
+        processed_text = ""  # Removed "This is RAIDR"
         for line in lines:
             line = line.strip()
             if not line:
@@ -298,7 +298,7 @@ def text_to_speech(text, voice="onyx"):
                         words[i] = " ".join(nato_numbers[c] if c in nato_numbers else "Point" if c == '.' else c for c in word)
                 processed_text += " ".join(words) + ". "
         
-        processed_text += " Over and Out."  # Only once at the end
+        # Removed "Over and Out"
         
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
@@ -424,8 +424,8 @@ def get_available_scans(uploaded_files):
     return scans
 
 def prepare_llm_context(selected_scan_data):
-    """Prepare context for the LLM in tactical radio format without repetition."""
-    context = "This is RAIDR. SIGINT report follows. "  # Only once at the start
+    """Prepare context for the LLM in tactical radio format without 'This is RAIDR' or 'Over and Out'."""
+    context = "SIGINT report follows. "  # Removed "This is RAIDR"
     for scan in selected_scan_data:
         scan_data = scan["scan_data"]
         context += f"Scan ID: {format_number(scan['id'])}. "
@@ -440,17 +440,17 @@ def prepare_llm_context(selected_scan_data):
                 context += f"Threat {signal.get('threat_level', 'unknown')}. Break. "
         else:
             context += "No signals detected. Break. "
-    context += "Over and Out."  # Only once at the end
+    # Removed "Over and Out"
     return context
 
 def query_chatgpt(query, context):
-    """Query OpenAI's ChatGPT with tactical radio style response without repetition."""
+    """Query OpenAI's ChatGPT with tactical radio style response without 'This is RAIDR' or 'Over and Out'."""
     try:
         client = openai.OpenAI(api_key=openai.api_key)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are RAIDR (pronounced 'Raider'), a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Start with 'This is RAIDR' once and end with 'Over and Out' once."},
+                {"role": "system", "content": "You are RAIDR (pronounced 'Raider'), a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Do not start with 'This is RAIDR' or end with 'Over and Out'."},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
             ],
             max_tokens=200,
@@ -459,7 +459,7 @@ def query_chatgpt(query, context):
         return response.choices[0].message.content.strip()
     except Exception as e:
         st.error(f"Error querying ChatGPT: {str(e)}")
-        return "This is RAIDR. Unable to process query. Over and Out."
+        return "Unable to process query."
 
 def main():
     st.markdown("""
