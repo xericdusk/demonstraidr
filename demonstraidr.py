@@ -742,12 +742,12 @@ def prepare_llm_context(selected_scan_data, max_signals_per_scan=25):
     
     return context
 
-def query_chatgpt(query, context):
-    """Query OpenAI's ChatGPT with tactical radio style response."""
+def query_chatgpt(query, context, model="gpt-3.5-turbo"):
+    """Query OpenAI's ChatGPT with tactical radio style response using the specified model."""
     try:
         client = openai.OpenAI(api_key=openai.api_key)
         response = client.chat.completions.create(
-            model="gpt-4-turbo",  # Changed from gpt-3.5-turbo to gpt-4-turbo
+            model=model,  # Use the model passed as parameter
             messages=[
                 {"role": "system", "content": "You are RAIDR (pronounced 'Raider'), a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Do not start with 'This is RAIDR' or end with 'Over and Out'."},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
