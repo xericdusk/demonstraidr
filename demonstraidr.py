@@ -363,7 +363,7 @@ def load_scan_file(uploaded_file):
                     "frequency_range": freq_range,
                     "detected_signals": detected_signals,
                     "is_signal_array": True
-                frenzy                })
+                })
                 return result
             
             result.update(data)
