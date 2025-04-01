@@ -278,7 +278,7 @@ def classify_signal(frequency, bandwidth):
 def text_to_speech(text, voice="onyx"):
     try:
         lines = text.split('\n')
-        processed_text = ""  # Removed "This is RAIDR"
+        processed_text = ""
         for line in lines:
             line = line.strip()
             if not line:
@@ -297,8 +297,6 @@ def text_to_speech(text, voice="onyx"):
                     elif re.match(r'^\d+\.\d+$', word):
                         words[i] = " ".join(nato_numbers[c] if c in nato_numbers else "Point" if c == '.' else c for c in word)
                 processed_text += " ".join(words) + ". "
-        
-        # Removed "Over and Out"
         
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
@@ -424,8 +422,8 @@ def get_available_scans(uploaded_files):
     return scans
 
 def prepare_llm_context(selected_scan_data):
-    """Prepare context for the LLM in tactical radio format without 'This is RAIDR' or 'Over and Out'."""
-    context = "SIGINT report follows. "  # Removed "This is RAIDR"
+    """Prepare context for the LLM in tactical radio format."""
+    context = "SIGINT report follows. "
     for scan in selected_scan_data:
         scan_data = scan["scan_data"]
         context += f"Scan ID: {format_number(scan['id'])}. "
@@ -440,11 +438,10 @@ def prepare_llm_context(selected_scan_data):
                 context += f"Threat {signal.get('threat_level', 'unknown')}. Break. "
         else:
             context += "No signals detected. Break. "
-    # Removed "Over and Out"
     return context
 
 def query_chatgpt(query, context):
-    """Query OpenAI's ChatGPT with tactical radio style response without 'This is RAIDR' or 'Over and Out'."""
+    """Query OpenAI's ChatGPT with tactical radio style response."""
     try:
         client = openai.OpenAI(api_key=openai.api_key)
         response = client.chat.completions.create(
@@ -557,7 +554,22 @@ def main():
         st.header("RAIDR Tactical SIGINT Interface")
         if 'selected_scan_data' in locals() and selected_scan_data:
             context = prepare_llm_context(selected_scan_data)
-            query = st.text_input("Enter tactical query:", key="text_query")
+            
+            # Use session state to persist and clear the query
+            if 'tactical_query' not in st.session_state:
+                st.session_state.tactical_query = ""
+            
+            col_query, col_clear = st.columns([3, 1])  # Split into two columns
+            with col_query:
+                query = st.text_input("Enter tactical query:", value=st.session_state.tactical_query, key="text_query", help="Click the 'x' in the box or 'New Entry' to clear.")
+            with col_clear:
+                if st.button("New Entry"):
+                    st.session_state.tactical_query = ""  # Clear the query
+                    st.rerun()  # Rerun to update the text input
+            
+            # Update session state with the current query
+            if query != st.session_state.tactical_query:
+                st.session_state.tactical_query = query
             
             voice_options = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
             selected_voice = st.selectbox("Select TTS Voice", voice_options, index=3)
