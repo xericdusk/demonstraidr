@@ -69,10 +69,10 @@ def download_file_from_google_drive(file_url):
         # Create a file-like object for Streamlit to process
         # Since we know files in the Google Drive folder are PNGs, set the extension explicitly
         file_name = "downloaded_file.png"  # Default name with .png extension
-        return io.BytesIO(file_content), file_name
+        return io.BytesIO(file_content), file_name, file_content
     except Exception as e:
         st.error(f"Error downloading file from Google Drive: {str(e)}")
-        return None, None
+        return None, None, None
 
 def process_waterfall_image(image_data):
     try:
@@ -276,9 +276,16 @@ def get_available_scans(uploaded_files):
             center_freq = scan_data.get("center_freq", 0) / 1e6
             if "frequency_range" in scan_data:
                 center_freq = (scan_data["frequency_range"][0] + scan_data["frequency_range"][1]) / 2e6
+            
+            # Read the file content for display purposes
+            uploaded_file.seek(0)
+            file_content = uploaded_file.read()
+            uploaded_file.seek(0)
+            
             scans.append({
                 "id": scan_id,
                 "file": uploaded_file,
+                "file_content": file_content,  # Store raw bytes for display
                 "timestamp": timestamp,
                 "center_freq": center_freq,
                 "signal_count": len(scan_data.get("detected_signals", [])),
@@ -539,7 +546,7 @@ def main():
         uploaded_files_drive = []
         if google_drive_link and st.button("Fetch File"):
             with st.spinner("Downloading file from Google Drive..."):
-                file_content, file_name = download_file_from_google_drive(google_drive_link)
+                file_content, file_name, raw_bytes = download_file_from_google_drive(google_drive_link)
                 if file_content and file_name:
                     # Create a file-like object with a name for Streamlit
                     uploaded_file = type('UploadedFile', (), {
@@ -547,6 +554,9 @@ def main():
                         'seek': lambda self, pos: file_content.seek(pos),
                         'name': file_name
                     })()
+                    # Reset the file pointer after creating the object
+                    file_content.seek(0)
+                    uploaded_file.seek(0)
                     uploaded_files_drive.append(uploaded_file)
                     st.success(f"Successfully fetched {file_name} from Google Drive.")
         
@@ -573,9 +583,8 @@ def main():
             scan = selected_scan_data[0]
             scan_data = scan["scan_data"]
             if scan["file_type"] == "png":
-                # Display the original PNG
-                scan["file"].seek(0)  # Reset file pointer to the beginning
-                st.image(scan["file"], use_column_width=True, caption="Original Waterfall Plot")
+                # Display the original PNG using the raw bytes
+                st.image(scan["file_content"], use_column_width=True, caption="Original Waterfall Plot")
             else:
                 img_str = plot_spectrum(scan_data)
                 if img_str:
