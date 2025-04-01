@@ -51,6 +51,28 @@ def load_signal_database():
 
 signal_db = load_signal_database()
 
+# NATO phonetic alphabet for numbers
+nato_numbers = {
+    '0': 'Zero', '1': 'One', '2': 'Two', '3': 'Three', '4': 'Four',
+    '5': 'Five', '6': 'Six', '7': 'Seven', '8': 'Eight', '9': 'Niner'
+}
+
+def format_frequency(freq_mhz):
+    """Convert frequency in MHz to NATO phonetic format with decimal method."""
+    freq_str = f"{freq_mhz:.3f}"  # Ensure 3 decimal places for consistency
+    result = ""
+    for char in freq_str:
+        if char in nato_numbers:
+            result += f"{nato_numbers[char]} "
+        elif char == '.':
+            result += "Point "
+    return result.strip() + " Megahertz"
+
+def format_number(num):
+    """Convert a number to NATO phonetic format."""
+    num_str = str(num)
+    return " ".join(nato_numbers[char] for char in num_str if char in nato_numbers)
+
 def download_file_from_google_drive(file_url):
     """Download a file from Google Drive using its shareable link."""
     try:
@@ -249,34 +271,31 @@ def classify_signal(frequency, bandwidth):
 
 def text_to_speech(text, voice="onyx"):
     try:
-        nato_numbers = {
-            '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
-            '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'niner'
-        }
-        
+        # Process text into tactical radio format
         lines = text.split('\n')
-        processed_text = ""
-        
+        processed_text = "DemonstRAIDR, this is Command. "
         for line in lines:
             line = line.strip()
             if not line:
-                processed_text += "\n"
+                processed_text += " Break. "
                 continue
             
-            if line.startswith("FREQ:"):
-                freq_str = line.split("FREQ:")[1].split("MHz")[0].strip()
-                freq_phonetic = ""
-                for char in freq_str:
-                    if char in nato_numbers:
-                        freq_phonetic += nato_numbers[char] + " "
-                    elif char == '.':
-                        freq_phonetic += "point "
-                freq_phonetic = freq_phonetic.strip()
-                processed_text += f"[SPEED:0.8] {freq_phonetic} megahertz [SPEED:0.95]\n"
+            # Handle frequency lines
+            freq_match = re.search(r'(\d+\.\d+|\d+)\s*MHz', line, re.IGNORECASE)
+            if freq_match:
+                freq = float(freq_match.group(1))
+                processed_text += f"Frequency {format_frequency(freq)}. "
             else:
-                processed_text += f"{line}\n"
+                # Replace standalone numbers with NATO phonetic
+                words = line.split()
+                for i, word in enumerate(words):
+                    if re.match(r'^\d+$', word):
+                        words[i] = format_number(word)
+                    elif re.match(r'^\d+\.\d+$', word):
+                        words[i] = " ".join(nato_numbers[c] if c in nato_numbers else "Point" if c == '.' else c for c in word)
+                processed_text += " ".join(words) + ". "
         
-        processed_text = processed_text.strip()
+        processed_text += "Roger. Out."
         
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
@@ -290,7 +309,7 @@ def text_to_speech(text, voice="onyx"):
             "input": processed_text,
             "voice": voice,
             "response_format": "mp3",
-            "speed": 0.95
+            "speed": 0.9  # Slightly slower for clarity
         }
         
         response = requests.post(
@@ -402,45 +421,46 @@ def get_available_scans(uploaded_files):
     return scans
 
 def prepare_llm_context(selected_scan_data):
-    """Prepare context for the LLM based on selected scan data."""
-    context = "RAIDR Tactical SIGINT Analysis:\n"
+    """Prepare context for the LLM in tactical radio format."""
+    context = "DemonstRAIDR, this is Command. SIGINT report follows.\n"
     for scan in selected_scan_data:
         scan_data = scan["scan_data"]
-        context += f"Scan ID: {scan['id']}\n"
-        context += f"Timestamp: {scan['timestamp']}\n"
-        context += f"File Type: {scan['file_type']}\n"
+        context += f"Scan ID: {format_number(scan['id'])}. "
+        context += f"Time: {scan['timestamp']}. "
         signals = scan_data.get("detected_signals", [])
         if signals:
-            context += "Detected Signals:\n"
+            context += "Signals detected. "
             for signal in signals:
-                context += f"- Frequency: {signal.get('frequency', 0) / 1e6:.2f} MHz, "
-                context += f"Power: {signal.get('power_dbm', 0):.2f} dBm, "
-                context += f"Bandwidth: {signal.get('bandwidth', 0) / 1e3:.2f} kHz, "
-                context += f"Type: {signal.get('type', 'unknown')}, "
-                context += f"Threat Level: {signal.get('threat_level', 'unknown')}, "
-                context += f"Confidence: {signal.get('confidence', 0):.2f}\n"
+                freq_mhz = signal.get('frequency', 0) / 1e6
+                context += f"Frequency {format_frequency(freq_mhz)}. "
+                context += f"Power {signal.get('power_dbm', 0):.1f} dBm. "
+                bw_khz = signal.get('bandwidth', 0) / 1e3
+                context += f"Bandwidth {format_number(int(bw_khz))} KiloHertz. "
+                context += f"Type {signal.get('type', 'unknown')}. "
+                context += f"Threat {signal.get('threat_level', 'unknown')}. "
+                context += f"Confidence {signal.get('confidence', 0):.1f}. Break. "
         else:
-            context += "No signals detected.\n"
-        context += "\n"
-    return context.strip()
+            context += "No signals detected. Break. "
+    context += "Over."
+    return context
 
 def query_chatgpt(query, context):
-    """Query OpenAI's ChatGPT with the given context and user query using the updated API."""
+    """Query OpenAI's ChatGPT with tactical radio style response."""
     try:
-        client = openai.OpenAI(api_key=openai.api_key)  # Initialize the client
+        client = openai.OpenAI(api_key=openai.api_key)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a tactical SIGINT analyst assistant. Provide concise, accurate responses based on the provided RF scan data."},
+                {"role": "system", "content": "You are a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Use 'Roger,' 'Over,' and 'Out' as needed."},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
             ],
-            max_tokens=500,
-            temperature=0.7
+            max_tokens=200,  # Keep responses brief
+            temperature=0.5  # More predictable, tactical responses
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         st.error(f"Error querying ChatGPT: {str(e)}")
-        return "Unable to process query due to an error."
+        return "Unable to process query. Out."
 
 def main():
     st.markdown("""
@@ -461,17 +481,14 @@ def main():
     with st.sidebar:
         st.header("Scan Controls")
         
-        # Input for Google Drive shareable link
         st.subheader("Load Scan from Google Drive Link")
         file_url = st.text_input("Enter Google Drive shareable link to a PNG file:", key="file_url")
         
-        # File uploader for local PNG files
         st.subheader("Upload Local Scan File")
         uploaded_file = st.file_uploader("Choose a PNG file", type=["png"], key="file_uploader")
         
         uploaded_files = []
         
-        # Handle Google Drive link
         if file_url:
             with st.spinner("Downloading file from Google Drive..."):
                 file_content, file_name, raw_bytes = download_file_from_google_drive(file_url)
@@ -486,7 +503,6 @@ def main():
                     uploaded_files.append(uploaded_file_from_drive)
                     st.success(f"Successfully downloaded file: {file_name}")
         
-        # Handle local file upload
         if uploaded_file is not None:
             uploaded_files.append(uploaded_file)
             st.success(f"Successfully uploaded file: {uploaded_file.name}")
