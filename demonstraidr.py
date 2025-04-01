@@ -67,11 +67,8 @@ def download_file_from_google_drive(file_url):
         os.unlink(temp_path)
         
         # Create a file-like object for Streamlit to process
-        # Extract file name from URL or use a default
-        file_name = file_url.split('/')[-1] if '/' in file_url else "downloaded_file"
-        # If the URL is a shareable link, the file name might not be in the URL; use a default
-        if '?' in file_name:
-            file_name = "downloaded_file"
+        # Since we know files in the Google Drive folder are PNGs, set the extension explicitly
+        file_name = "downloaded_file.png"  # Default name with .png extension
         return io.BytesIO(file_content), file_name
     except Exception as e:
         st.error(f"Error downloading file from Google Drive: {str(e)}")
@@ -168,26 +165,51 @@ def process_waterfall_image(image_data):
 
 def load_scan_file(uploaded_file):
     try:
-        if uploaded_file.name.endswith('.png'):
+        # Check if the file is a PNG by name or content
+        is_png = False
+        if hasattr(uploaded_file, 'name') and uploaded_file.name.endswith('.png'):
+            is_png = True
+        else:
+            # Read a small chunk to check for PNG signature
+            uploaded_file.seek(0)
+            header = uploaded_file.read(8)
+            uploaded_file.seek(0)
+            # PNG files start with the signature: 89 50 4E 47 0D 0A 1A 0A
+            if header == b'\x89PNG\r\n\x1a\n':
+                is_png = True
+
+        if is_png:
             return process_waterfall_image(uploaded_file)
-        elif uploaded_file.name.endswith('.jsonl'):
+        elif hasattr(uploaded_file, 'name') and uploaded_file.name.endswith('.jsonl'):
             content = uploaded_file.read().decode('utf-8')
             for line in content.split('\n'):
                 if line.strip():
                     return json.loads(line.strip())
         else:
-            data = json.loads(uploaded_file.read().decode('utf-8'))
+            # Try parsing as JSON
+            content = uploaded_file.read().decode('utf-8')
+            data = json.loads(content)
         
-        # Handle waterfall data format (if JSON/JSONL)
-        if "timestamp_start" in data and "timestamp_end" in data:
-            return {
-                "timestamp": f"{data['timestamp_start']} to {data['timestamp_end']}",
-                "frequency_range": data.get("frequency_range", [0, 0]),
-                "detected_signals": data.get("detected_signals", []),
-                "is_waterfall": True
-            }
-        else:
-            return data
+            # Handle waterfall data format (if JSON/JSONL)
+            if "timestamp_start" in data and "timestamp_end" in data:
+                return {
+                    "timestamp": f"{data['timestamp_start']} to {data['timestamp_end']}",
+                    "frequency_range": data.get("frequency_range", [0, 0]),
+                    "detected_signals": data.get("detected_signals", []),
+                    "is_waterfall": True
+                }
+            else:
+                return data
+    except json.JSONDecodeError:
+        # If JSON parsing fails, assume it's a PNG if it wasn't already identified
+        if not is_png:
+            uploaded_file.seek(0)
+            header = uploaded_file.read(8)
+            uploaded_file.seek(0)
+            if header == b'\x89PNG\r\n\x1a\n':
+                return process_waterfall_image(uploaded_file)
+        st.error("File format not supported. Please upload a PNG, JSON, or JSONL file.")
+        return {}
     except Exception as e:
         st.error(f"Error loading scan file: {str(e)}")
         return {}
@@ -537,7 +559,7 @@ def main():
         if uploaded_files:
             scans = get_available_scans(uploaded_files)
             if not scans:
-                st.info("No valid scans uploaded. Please upload a JSON, JSONL, or PNG file.")
+                st.info("No valid scans uploaded. Please upload a PNG, JSON, or JSONL file.")
             else:
                 scan_options = {f"{scan['id']} - {scan['timestamp'][:16]} ({scan['center_freq']} MHz) [{scan['file_type']}]": scan for scan in scans}
                 selected_scans = st.multiselect("Select scans for analysis", options=list(scan_options.keys()), default=[list(scan_options.keys())[0]] if scan_options else None)
