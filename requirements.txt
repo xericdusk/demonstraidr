@@ -1,0 +1,10 @@
+streamlit
+openai
+pygame
+opencv-python
+speechrecognition
+scipy
+pandas
+numpy
+matplotlib
+requests
