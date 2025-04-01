@@ -61,20 +61,28 @@ def download_file_from_google_drive(file_url):
         
         # Read the file content
         with open(temp_path, 'rb') as f:
-            file_content = f.read()
+            raw_bytes = f.read()
         
         # Clean up the temporary file
         os.unlink(temp_path)
         
+        # Validate that the file is a PNG
+        if not raw_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+            st.error(f"Downloaded file is not a valid PNG file. First 8 bytes: {raw_bytes[:8].hex()}")
+            return None, None, None
+        
+        # Debug: Log file size and first few bytes
+        st.info(f"Downloaded file size: {len(raw_bytes)} bytes")
+        st.info(f"First 8 bytes: {raw_bytes[:8].hex()}")
+        
         # Create a file-like object for Streamlit to process
-        # Since we know files in the Google Drive folder are PNGs, set the extension explicitly
         file_name = "downloaded_file.png"  # Default name with .png extension
-        return io.BytesIO(file_content), file_name, file_content
+        file_content = io.BytesIO(raw_bytes)
+        return file_content, file_name, raw_bytes
     except Exception as e:
         st.error(f"Error downloading file from Google Drive: {str(e)}")
         return None, None, None
-
-def process_waterfall_image(image_data):
+    def process_waterfall_image(image_data):
     try:
         # Convert uploaded image to OpenCV format
         file_bytes = np.asarray(bytearray(image_data.read()), dtype=np.uint8)
@@ -296,109 +304,6 @@ def get_available_scans(uploaded_files):
             st.error(f"Error loading scan {uploaded_file.name}: {str(e)}")
     scans.sort(key=lambda x: x["timestamp"], reverse=True)
     return scans
-
-def prepare_llm_context(selected_scans):
-    context = "TACTICAL RF SPECTRUM REPORT\n===========================\n\n"
-    for scan in selected_scans:
-        scan_id = scan["id"]
-        scan_data = scan["scan_data"]
-        timestamp = scan_data.get("timestamp", "Unknown")
-        signals = scan_data.get("detected_signals", [])
-        
-        if scan_data.get("is_waterfall", False):
-            freq_range = scan_data.get("frequency_range", [0, 0])
-            freq_start = freq_range[0] / 1e6
-            freq_end = freq_range[1] / 1e6
-            context += f"SCAN ID: {scan_id}\nTIMESTAMP: {timestamp}\nFREQUENCY RANGE: {freq_start:.2f} MHz to {freq_end:.2f} MHz\n\n"
-        else:
-            center_freq = scan_data.get("center_freq", 0) / 1e6
-            sample_rate = scan_data.get("sample_rate", 0) / 1e6
-            context += f"SCAN ID: {scan_id}\nTIMESTAMP: {timestamp}\nCENTER FREQ: {center_freq:.2f} MHz\nBANDWIDTH: {sample_rate:.2f} MHz\n\n"
-        
-        context += f"DETECTED SIGNALS: {len(signals)}\n"
-        for signal in signals:
-            freq = signal.get("frequency", 0) / 1e6
-            signal_type = signal.get("type", "UNKNOWN")
-            if signal_type == "UNKNOWN":
-                classification = classify_signal(signal.get("frequency", 0), signal.get("bandwidth", 0))
-                signal_type = classification["type"]
-                signal["type"] = signal_type
-                signal["threat_level"] = classification["threat_level"]
-                signal["confidence"] = classification["confidence"]
-            context += f"FREQ: {freq:.3f} MHz\n  TYPE: {signal_type}\n  POWER: {signal.get('power_dbm', 'N/A')} dBm\n"
-            if "bandwidth" in signal:
-                context += f"  BW: {signal.get('bandwidth', 0)/1e3:.1f} kHz\n"
-            context += f"  THREAT: {signal.get('threat_level', 'UNKNOWN')}\n  CONFIDENCE: {signal.get('confidence', 0):.1f}\n\n"
-        context += "------------------------\n\n"
-    return context
-
-def query_chatgpt(query, context):
-    try:
-        system_prompt = """
-        You are RAIDR, a Tactical SIGINT Analyst AI providing information to ground troops. 
-        You analyze RF spectrum data and respond to queries about emitters, frequency usage, and potential threats.
-        
-        IMPORTANT GUIDELINES:
-        1. Speak in tactical radio style - concise, direct, using military terminology.
-        2. Start with "X SIGNALS OF INTEREST DETECTED" where X is the number of detected signals.
-        3. For each signal, list only:
-           - FREQ: in MHz with three decimal places (e.g., 2442.239 MHz)
-           - ASSESSMENT: brief tactical assessment of the signal type and threat (e.g., "WiFi, low threat, likely civilian")
-        4. Do not number the signals (e.g., do not use "SIGNAL 1", "SIGNAL 2").
-        5. End with "END OF REPORT. OVER." and do not use "OVER" elsewhere.
-        6. Focus on actionable intelligence, avoiding details like power, bandwidth, or confidence unless requested.
-        7. Use the provided RF spectrum report to inform your response.
-        """
-        # Updated to use the new OpenAI API syntax
-        client = openai.OpenAI(api_key=openai.api_key)
-        response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"{context}\n\nTACTICAL QUERY: {query}"}
-            ],
-            max_tokens=500,
-            temperature=0.7
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.error(f"Error querying ChatGPT: {str(e)}")
-        return "COMMUNICATION ERROR. UNABLE TO PROCESS QUERY AT THIS TIME. RETRY COMMS ON ALTERNATE CHANNEL. OVER."
-
-def text_to_speech(text, voice="onyx"):
-    try:
-        # NATO phonetic numbers
-        nato_numbers = {
-            '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
-            '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'niner'
-        }
-        
-        # Process entire text as one chunk with phonetic frequency replacement
-        lines = text.split('\n')
-        processed_text = ""
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                processed_text += "\n"
-                continue
-            
-            if line.startswith("FREQ:"):
-                freq_str = line.split("FREQ:")[1].split("MHz")[0].strip()
-                freq_phonetic = ""
-                for char in freq_str:
-                    if char in nato_numbers:
-                        freq_phonetic += nato_numbers[char] + " "
-                    elif char == '.':
-                        freq_phonetic += "point "
-                freq_phonetic = freq_phonetic.strip()
-                processed_text += f"[SPEED:0.8] {freq_phonetic} megahertz [SPEED:0.95]\n"
-            else:
-                processed_text += f"{line}\n"
-        
-        # Remove extra newlines and prepare as single chunk
-        processed_text = processed_text.strip()
-        
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
         
@@ -530,23 +435,13 @@ def main():
     with st.sidebar:
         st.header("Scan Controls")
         
-        # Option 1: Upload scans locally
-        st.subheader("Upload Scans Locally")
-        uploaded_files_local = st.file_uploader("Upload HackRF scan data", type=["json", "jsonl", "png"], accept_multiple_files=True, key="local_uploader")
-        
-        # Option 2: Fetch scans from Google Drive
-        st.subheader("Fetch Scans from Google Drive")
-        st.markdown("""
-        To fetch a scan from Google Drive:
-        1. Go to the shared folder: [DemonstRAIDR Scans](https://drive.google.com/drive/folders/1da78dTwQMNiqIc2eUDvxHTzWPp5yL2nN?usp=drive_link)
-        2. Right-click the file you want to use, click 'Share', and copy the link.
-        3. Paste the shareable link below and click 'Fetch File'.
-        """)
-        google_drive_link = st.text_input("Enter Google Drive file link:", key="google_drive_link")
-        uploaded_files_drive = []
-        if google_drive_link and st.button("Fetch File"):
+        # Input for Google Drive shareable link
+        st.subheader("Load Scan from Google Drive Link")
+        file_url = st.text_input("Enter Google Drive shareable link to a PNG file:", key="file_url")
+        uploaded_files = []
+        if file_url:
             with st.spinner("Downloading file from Google Drive..."):
-                file_content, file_name, raw_bytes = download_file_from_google_drive(google_drive_link)
+                file_content, file_name, raw_bytes = download_file_from_google_drive(file_url)
                 if file_content and file_name:
                     # Create a file-like object with a name for Streamlit
                     uploaded_file = type('UploadedFile', (), {
@@ -557,22 +452,19 @@ def main():
                     # Reset the file pointer after creating the object
                     file_content.seek(0)
                     uploaded_file.seek(0)
-                    uploaded_files_drive.append(uploaded_file)
-                    st.success(f"Successfully fetched {file_name} from Google Drive.")
-        
-        # Combine local and Google Drive uploads
-        uploaded_files = uploaded_files_local + uploaded_files_drive if uploaded_files_local else uploaded_files_drive
+                    uploaded_files.append(uploaded_file)
+                    st.success(f"Successfully downloaded file: {file_name}")
         
         if not uploaded_files:
-            st.info("Please upload one or more scans to begin analysis.")
+            st.info("No file downloaded. Please provide a valid Google Drive shareable link to a PNG file.")
         
         if uploaded_files:
             scans = get_available_scans(uploaded_files)
             if not scans:
-                st.info("No valid scans uploaded. Please upload a PNG, JSON, or JSONL file.")
+                st.info("No valid scans loaded. Please ensure the file is a valid PNG.")
             else:
                 scan_options = {f"{scan['id']} - {scan['timestamp'][:16]} ({scan['center_freq']} MHz) [{scan['file_type']}]": scan for scan in scans}
-                selected_scans = st.multiselect("Select scans for analysis", options=list(scan_options.keys()), default=[list(scan_options.keys())[0]] if scan_options else None)
+                selected_scans = st.multiselect("Select scans for analysis", options=list(scan_options.keys()), default=list(scan_options.keys()))
                 selected_scan_data = [scan_options[scan] for scan in selected_scans]
     
     tab1, tab2 = st.tabs(["Spectrum Analyzer", "Tactical SIGINT"])
@@ -584,11 +476,11 @@ def main():
             scan_data = scan["scan_data"]
             if scan["file_type"] == "png":
                 # Display the original PNG using the raw bytes
-                st.image(scan["file_content"], use_column_width=True, caption="Original Waterfall Plot")
+                st.image(scan["file_content"], use_container_width=True, caption="Original Waterfall Plot", format="PNG")
             else:
                 img_str = plot_spectrum(scan_data)
                 if img_str:
-                    st.image(f"data:image/png;base64,{img_str}", use_column_width=True)
+                    st.image(f"data:image/png;base64,{img_str}", use_container_width=True)
             st.subheader("Detected Signals")
             signals = scan_data.get("detected_signals", [])
             if signals:
@@ -609,7 +501,7 @@ def main():
             else:
                 st.info("No signals detected in this scan.")
         else:
-            st.info("Select a scan from the sidebar to view spectrum analysis.")
+            st.info("No scans available for analysis. Please provide a valid Google Drive shareable link to a PNG file.")
     
     with tab2:
         st.header("RAIDR Tactical SIGINT Interface")
@@ -648,7 +540,7 @@ def main():
             with st.expander("Raw Spectrum Data Context"):
                 st.text(context)
         else:
-            st.info("Select scan(s) from the sidebar to enable RAIDR analysis.")
+            st.info("No scans available for RAIDR analysis. Please provide a valid Google Drive shareable link to a PNG file.")
 
 if 'last_response' not in st.session_state:
     st.session_state.last_response = ""
