@@ -91,19 +91,97 @@ def download_file_from_google_drive(file_url):
         
         os.unlink(temp_path)
         
-        if not raw_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
-            st.error(f"Downloaded file is not a valid PNG file. First 8 bytes: {raw_bytes[:8].hex()}")
+        # Check file type by magic numbers/headers
+        if raw_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+            file_type = "png"
+        elif raw_bytes.startswith(b'{') or raw_bytes.startswith(b'['):
+            file_type = "json"
+        elif b'\n' in raw_bytes and (b'{' in raw_bytes or b'[' in raw_bytes):
+            file_type = "jsonl"
+        elif b',' in raw_bytes and b'\n' in raw_bytes:
+            file_type = "csv"
+        else:
+            st.error("Downloaded file is not a recognized format.")
             return None, None, None
         
-        st.info(f"Downloaded file size: {len(raw_bytes)} bytes")
-        st.info(f"First 8 bytes: {raw_bytes[:8].hex()}")
+        st.info(f"Downloaded file size: {len(raw_bytes)} bytes, detected as {file_type}")
         
-        file_name = "downloaded_file.png"
+        file_name = f"downloaded_file.{file_type}"
         file_content = io.BytesIO(raw_bytes)
         return file_content, file_name, raw_bytes
     except Exception as e:
         st.error(f"Error downloading file from Google Drive: {str(e)}")
         return None, None, None
+
+def process_csv_file(csv_file):
+    """Process a CSV file containing signal data."""
+    try:
+        # Read CSV file into a pandas DataFrame
+        df = pd.read_csv(csv_file)
+        
+        # Check for required columns (adjust as needed for your CSV format)
+        required_cols = ['frequency', 'power_dbm']
+        if not all(col in df.columns for col in required_cols):
+            # Try to infer columns if standard names are not found
+            if 'freq' in df.columns:
+                df.rename(columns={'freq': 'frequency'}, inplace=True)
+            if 'power' in df.columns:
+                df.rename(columns={'power': 'power_dbm'}, inplace=True)
+            
+            # Check again after renaming
+            if not all(col in df.columns for col in required_cols):
+                st.warning(f"CSV file missing required columns: {required_cols}. Attempting to infer data structure.")
+                
+                # Assume first column is frequency and second is power
+                if len(df.columns) >= 2:
+                    df.rename(columns={df.columns[0]: 'frequency', df.columns[1]: 'power_dbm'}, inplace=True)
+        
+        # Convert frequency to float if needed
+        if df['frequency'].dtype == object:
+            df['frequency'] = df['frequency'].str.replace('MHz', '').str.replace('GHz', '000').str.strip().astype(float)
+        
+        # Convert power to float if needed
+        if df['power_dbm'].dtype == object:
+            df['power_dbm'] = df['power_dbm'].str.replace('dBm', '').str.strip().astype(float)
+        
+        # Add bandwidth column if not present
+        if 'bandwidth' not in df.columns:
+            df['bandwidth'] = 1e6  # Default to 1 MHz bandwidth
+        
+        # Classify signals
+        signals = []
+        for _, row in df.iterrows():
+            freq = float(row['frequency'])
+            power = float(row['power_dbm'])
+            bw = float(row['bandwidth']) if 'bandwidth' in row and pd.notna(row['bandwidth']) else 1e6
+            
+            signal_type = classify_signal(freq, bw)
+            
+            signals.append({
+                "frequency": freq,
+                "power_dbm": power,
+                "bandwidth": bw,
+                "type": signal_type["type"],
+                "threat_level": signal_type["threat_level"],
+                "confidence": signal_type["confidence"]
+            })
+        
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Determine frequency range
+        min_freq = df['frequency'].min()
+        max_freq = df['frequency'].max()
+        
+        return {
+            "timestamp": timestamp,
+            "frequency_range": [min_freq, max_freq],
+            "detected_signals": signals,
+            "is_csv": True
+        }
+    except Exception as e:
+        st.error(f"Error processing CSV file: {str(e)}")
+        return {}
     
 def process_waterfall_image(image_data):
     try:
@@ -180,27 +258,29 @@ def process_waterfall_image(image_data):
 
 def load_scan_file(uploaded_file):
     try:
-        is_png = False
-        if hasattr(uploaded_file, 'name') and uploaded_file.name.endswith('.png'):
-            is_png = True
-        else:
-            uploaded_file.seek(0)
-            header = uploaded_file.read(8)
-            uploaded_file.seek(0)
-            if header == b'\x89PNG\r\n\x1a\n':
-                is_png = True
-
-        if is_png:
+        # Check file type by extension first
+        file_extension = ""
+        if hasattr(uploaded_file, 'name'):
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+        
+        # Process based on file type
+        if file_extension == 'png' or check_file_header(uploaded_file, b'\x89PNG\r\n\x1a\n'):
             return process_waterfall_image(uploaded_file)
-        elif hasattr(uploaded_file, 'name') and uploaded_file.name.endswith('.jsonl'):
+        
+        elif file_extension == 'csv':
+            return process_csv_file(uploaded_file)
+        
+        elif file_extension == 'jsonl':
             content = uploaded_file.read().decode('utf-8')
             for line in content.split('\n'):
                 if line.strip():
                     return json.loads(line.strip())
-        else:
+            return {}
+        
+        elif file_extension == 'json':
             content = uploaded_file.read().decode('utf-8')
             data = json.loads(content)
-        
+            
             if "timestamp_start" in data and "timestamp_end" in data:
                 return {
                     "timestamp": f"{data['timestamp_start']} to {data['timestamp_end']}",
@@ -210,18 +290,62 @@ def load_scan_file(uploaded_file):
                 }
             else:
                 return data
-    except json.JSONDecodeError:
-        if not is_png:
+        
+        else:
+            # Try to determine file type by content
             uploaded_file.seek(0)
-            header = uploaded_file.read(8)
+            content_start = uploaded_file.read(1024).decode('utf-8', errors='ignore')
             uploaded_file.seek(0)
-            if header == b'\x89PNG\r\n\x1a\n':
+            
+            # Check if it's JSON
+            if content_start.strip().startswith('{') or content_start.strip().startswith('['):
+                try:
+                    content = uploaded_file.read().decode('utf-8')
+                    data = json.loads(content)
+                    return data
+                except:
+                    pass
+            
+            # Check if it's JSONL
+            if '\n{' in content_start or '\n[' in content_start:
+                try:
+                    content = uploaded_file.read().decode('utf-8')
+                    for line in content.split('\n'):
+                        if line.strip():
+                            return json.loads(line.strip())
+                    return {}
+                except:
+                    pass
+                
+            # Check if it's CSV
+            if ',' in content_start and '\n' in content_start:
+                return process_csv_file(uploaded_file)
+            
+            # Last resort: try as PNG
+            try:
                 return process_waterfall_image(uploaded_file)
-        st.error("File format not supported. Please upload a PNG, JSON, or JSONL file.")
+            except:
+                pass
+            
+            st.error("File format not supported. Please upload a PNG, JSON, JSONL, or CSV file.")
+            return {}
+                
+    except json.JSONDecodeError:
+        st.error("Invalid JSON format. Please check your file.")
         return {}
     except Exception as e:
         st.error(f"Error loading scan file: {str(e)}")
         return {}
+
+def check_file_header(file, header_bytes):
+    """Check if a file starts with the given bytes."""
+    try:
+        file.seek(0)
+        file_start = file.read(len(header_bytes))
+        file.seek(0)
+        return file_start == header_bytes
+    except:
+        return False
 
 def process_iq_data(iq_data, center_freq, sample_rate):
     freqs, psd = signal.welch(iq_data, fs=sample_rate, nperseg=1024, scaling='spectrum')
@@ -353,7 +477,7 @@ def speech_to_text():
     return ""
 
 def plot_spectrum(scan_data):
-    if scan_data.get("is_waterfall", False):
+    if scan_data.get("is_waterfall", False) or scan_data.get("is_csv", False):
         fig, ax = plt.subplots(figsize=(10, 5))
         signals = scan_data.get("detected_signals", [])
         if not signals:
@@ -411,11 +535,27 @@ def get_available_scans(uploaded_files):
         file.seek(0)
         scan_data = load_scan_file(file)
         if scan_data:
+            file_type = "unknown"
+            if hasattr(file, 'name'):
+                ext = file.name.split('.')[-1].lower()
+                file_type = ext
+            else:
+                # Try to infer file type from content
+                file.seek(0)
+                content_start = file.read(8)
+                file.seek(0)
+                if content_start.startswith(b'\x89PNG\r\n\x1a\n'):
+                    file_type = "png"
+                elif scan_data.get("is_csv", False):
+                    file_type = "csv"
+                elif scan_data.get("is_waterfall", False):
+                    file_type = "json"
+            
             scans.append({
                 "id": i,
                 "timestamp": scan_data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-                "center_freq": scan_data.get("frequency_range", [0, 0])[0] / 1e6 if scan_data.get("is_waterfall") else scan_data.get("center_freq", 0) / 1e6,
-                "file_type": "png" if file.name.endswith('.png') else "json",
+                "center_freq": scan_data.get("frequency_range", [0, 0])[0] / 1e6 if scan_data.get("is_waterfall") or scan_data.get("is_csv", False) else scan_data.get("center_freq", 0) / 1e6,
+                "file_type": file_type,
                 "scan_data": scan_data,
                 "file_content": file
             })
@@ -478,10 +618,10 @@ def main():
         st.header("Scan Controls")
         
         st.subheader("Load Scan from Google Drive Link")
-        file_url = st.text_input("Enter Google Drive shareable link to a PNG file:", key="file_url")
+        file_url = st.text_input("Enter Google Drive shareable link to a file:", key="file_url")
         
         st.subheader("Upload Local Scan File")
-        uploaded_file = st.file_uploader("Choose a PNG file", type=["png"], key="file_uploader")
+        uploaded_file = st.file_uploader("Choose a file", type=["png", "json", "jsonl", "csv"], key="file_uploader")
         
         uploaded_files = []
         
@@ -504,12 +644,12 @@ def main():
             st.success(f"Successfully uploaded file: {uploaded_file.name}")
         
         if not uploaded_files:
-            st.info("No files uploaded or downloaded. Please upload a PNG file or provide a valid Google Drive shareable link.")
+            st.info("No files uploaded or downloaded. Please upload a file (PNG, JSON, JSONL, CSV) or provide a valid Google Drive shareable link.")
         
         if uploaded_files:
             scans = get_available_scans(uploaded_files)
             if not scans:
-                st.info("No valid scans loaded. Please ensure the file is a valid PNG.")
+                st.info("No valid scans loaded. Please ensure the file is a valid format.")
             else:
                 scan_options = {f"{scan['id']} - {scan['timestamp'][:16]} ({scan['center_freq']} MHz) [{scan['file_type']}]": scan for scan in scans}
                 selected_scans = st.multiselect("Select scans for analysis", options=list(scan_options.keys()), default=list(scan_options.keys()))
@@ -522,12 +662,17 @@ def main():
         if 'selected_scan_data' in locals() and selected_scan_data:
             scan = selected_scan_data[0]
             scan_data = scan["scan_data"]
-            if scan["file_type"] == "png":
+            
+            # Display different visuals based on file type
+            file_type = scan["file_type"]
+            
+            if file_type == "png":
                 st.image(scan["file_content"], use_container_width=True, caption="Original Waterfall Plot")
             else:
                 img_str = plot_spectrum(scan_data)
                 if img_str:
                     st.image(f"data:image/png;base64,{img_str}", use_container_width=True)
+                    
             st.subheader("Detected Signals")
             signals = scan_data.get("detected_signals", [])
             if signals:
@@ -548,7 +693,7 @@ def main():
             else:
                 st.info("No signals detected in this scan.")
         else:
-            st.info("No scans available for analysis. Please upload a PNG file or provide a valid Google Drive shareable link.")
+            st.info("No scans available for analysis. Please upload a file (PNG, JSON, JSONL, CSV) or provide a valid Google Drive shareable link.")
     
     with tab2:
         st.header("RAIDR Tactical SIGINT Interface")
@@ -601,7 +746,7 @@ def main():
             with st.expander("Raw Spectrum Data Context"):
                 st.text(context)
         else:
-            st.info("No scans available for RAIDR analysis. Please upload a PNG file or provide a valid Google Drive shareable link.")
+            st.info("No scans available for RAIDR analysis. Please upload a file (PNG, JSON, JSONL, CSV) or provide a valid Google Drive shareable link.")
 
 if 'last_response' not in st.session_state:
     st.session_state.last_response = ""
