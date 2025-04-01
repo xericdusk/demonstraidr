@@ -438,39 +438,51 @@ def main():
     st.markdown('<h1 class="tactical-header">DemonstRAIDR: Tactical SIGINT Analyst</h1>', unsafe_allow_html=True)
     
     with st.sidebar:
-        st.header("Scan Controls")
-        
-        # Input for Google Drive shareable link
-        st.subheader("Load Scan from Google Drive Link")
-        file_url = st.text_input("Enter Google Drive shareable link to a PNG file:", key="file_url")
-        uploaded_files = []
-        if file_url:
-            with st.spinner("Downloading file from Google Drive..."):
-                file_content, file_name, raw_bytes = download_file_from_google_drive(file_url)
-                if file_content and file_name:
-                    # Create a file-like object with a name for Streamlit
-                    uploaded_file = type('UploadedFile', (), {
-                        'read': lambda self: file_content.read(),
-                        'seek': lambda self, pos: file_content.seek(pos),
-                        'name': file_name
-                    })()
-                    # Reset the file pointer after creating the object
-                    file_content.seek(0)
-                    uploaded_file.seek(0)
-                    uploaded_files.append(uploaded_file)
-                    st.success(f"Successfully downloaded file: {file_name}")
-        
-        if not uploaded_files:
-            st.info("No file downloaded. Please provide a valid Google Drive shareable link to a PNG file.")
-        
-        if uploaded_files:
-            scans = get_available_scans(uploaded_files)
-            if not scans:
-                st.info("No valid scans loaded. Please ensure the file is a valid PNG.")
-            else:
-                scan_options = {f"{scan['id']} - {scan['timestamp'][:16]} ({scan['center_freq']} MHz) [{scan['file_type']}]": scan for scan in scans}
-                selected_scans = st.multiselect("Select scans for analysis", options=list(scan_options.keys()), default=list(scan_options.keys()))
-                selected_scan_data = [scan_options[scan] for scan in selected_scans]
+    st.header("Scan Controls")
+    
+    # Input for Google Drive shareable link
+    st.subheader("Load Scan from Google Drive Link")
+    file_url = st.text_input("Enter Google Drive shareable link to a PNG file:", key="file_url")
+    
+    # File uploader for local PNG files
+    st.subheader("Upload Local Scan File")
+    uploaded_file = st.file_uploader("Choose a PNG file", type=["png"], key="file_uploader")
+    
+    uploaded_files = []
+    
+    # Handle Google Drive link
+    if file_url:
+        with st.spinner("Downloading file from Google Drive..."):
+            file_content, file_name, raw_bytes = download_file_from_google_drive(file_url)
+            if file_content and file_name:
+                # Create a file-like object with a name for Streamlit
+                uploaded_file_from_drive = type('UploadedFile', (), {
+                    'read': lambda self: file_content.read(),
+                    'seek': lambda self, pos: file_content.seek(pos),
+                    'name': file_name
+                })()
+                # Reset the file pointer after creating the object
+                file_content.seek(0)
+                uploaded_file_from_drive.seek(0)
+                uploaded_files.append(uploaded_file_from_drive)
+                st.success(f"Successfully downloaded file: {file_name}")
+    
+    # Handle local file upload
+    if uploaded_file is not None:
+        uploaded_files.append(uploaded_file)
+        st.success(f"Successfully uploaded file: {uploaded_file.name}")
+    
+    if not uploaded_files:
+        st.info("No files uploaded or downloaded. Please upload a PNG file or provide a valid Google Drive shareable link.")
+    
+    if uploaded_files:
+        scans = get_available_scans(uploaded_files)
+        if not scans:
+            st.info("No valid scans loaded. Please ensure the file is a valid PNG.")
+        else:
+            scan_options = {f"{scan['id']} - {scan['timestamp'][:16]} ({scan['center_freq']} MHz) [{scan['file_type']}]": scan for scan in scans}
+            selected_scans = st.multiselect("Select scans for analysis", options=list(scan_options.keys()), default=list(scan_options.keys()))
+            selected_scan_data = [scan_options[scan] for scan in selected_scans]
     
     tab1, tab2 = st.tabs(["Spectrum Analyzer", "Tactical SIGINT"])
     
