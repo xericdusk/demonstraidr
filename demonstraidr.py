@@ -346,7 +346,7 @@ def plot_spectrum(scan_data):
         
         for signal in signals:
             freq = signal["frequency"] / 1e6
-            power = signal.get("power_dBm", -100)
+            power = signal.get("power_dbm", -100)
             label = signal.get("type", "unknown")
             color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
             ax.plot(freq, power, 'o', markersize=8, color=color)
@@ -367,7 +367,7 @@ def plot_spectrum(scan_data):
         signals = scan_data.get("detected_signals", [])
         for signal in signals:
             freq = signal.get("frequency", 0) / 1e6
-            power = signal.get("power_dBm", -100)
+            power = signal.get("power_dbm", -100)
             label = signal.get("type", "unknown")
             color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
             ax.plot(freq, power, 'o', markersize=8, color=color)
@@ -425,9 +425,10 @@ def prepare_llm_context(selected_scan_data):
     return context.strip()
 
 def query_chatgpt(query, context):
-    """Query OpenAI's ChatGPT with the given context and user query."""
+    """Query OpenAI's ChatGPT with the given context and user query using the updated API."""
     try:
-        response = openai.ChatCompletion.create(
+        client = openai.OpenAI(api_key=openai.api_key)  # Initialize the client
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a tactical SIGINT analyst assistant. Provide concise, accurate responses based on the provided RF scan data."},
@@ -436,7 +437,7 @@ def query_chatgpt(query, context):
             max_tokens=500,
             temperature=0.7
         )
-        return response.choices[0].message["content"].strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
         st.error(f"Error querying ChatGPT: {str(e)}")
         return "Unable to process query due to an error."
