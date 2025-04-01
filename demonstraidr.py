@@ -54,29 +54,23 @@ signal_db = load_signal_database()
 def download_file_from_google_drive(file_url):
     """Download a file from Google Drive using its shareable link."""
     try:
-        # Create a temporary file to store the downloaded file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.tmp') as temp_file:
             temp_path = temp_file.name
             gdown.download(file_url, temp_path, quiet=False)
         
-        # Read the file content
         with open(temp_path, 'rb') as f:
             raw_bytes = f.read()
         
-        # Clean up the temporary file
         os.unlink(temp_path)
         
-        # Validate that the file is a PNG
         if not raw_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
             st.error(f"Downloaded file is not a valid PNG file. First 8 bytes: {raw_bytes[:8].hex()}")
             return None, None, None
         
-        # Debug: Log file size and first few bytes
         st.info(f"Downloaded file size: {len(raw_bytes)} bytes")
         st.info(f"First 8 bytes: {raw_bytes[:8].hex()}")
         
-        # Create a file-like object for Streamlit to process
-        file_name = "downloaded_file.png"  # Default name with .png extension
+        file_name = "downloaded_file.png"
         file_content = io.BytesIO(raw_bytes)
         return file_content, file_name, raw_bytes
     except Exception as e:
@@ -85,45 +79,36 @@ def download_file_from_google_drive(file_url):
     
 def process_waterfall_image(image_data):
     try:
-        # Convert uploaded image to OpenCV format
         file_bytes = np.asarray(bytearray(image_data.read()), dtype=np.uint8)
         img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError("Could not load image")
 
-        # Convert to grayscale for easier processing
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Extract metadata (hardcoded for now; ideally use OCR like Tesseract)
         timestamp = "2025-03-31 18:46:49 to 18:51:06"
-        freq_range = [10e6, 6000e6]  # 10 MHz to 6,000 MHz
-        power_range = [0.46, 20.69]  # dBm range from the plot
+        freq_range = [10e6, 6000e6]
+        power_range = [0.46, 20.69]
 
-        # Define the region of interest (ROI) for the waterfall plot
         height, width = gray.shape
-        plot_top = int(height * 0.1)  # Skip top 10% (title, labels)
-        plot_bottom = int(height * 0.9)  # Skip bottom 10% (labels)
-        plot_left = int(width * 0.05)  # Skip left 5% (y-axis labels)
-        plot_right = int(width * 0.95)  # Skip right 5% (colorbar)
+        plot_top = int(height * 0.1)
+        plot_bottom = int(height * 0.9)
+        plot_left = int(width * 0.05)
+        plot_right = int(width * 0.95)
         plot_img = gray[plot_top:plot_bottom, plot_left:plot_right]
 
-        # Threshold the image to detect bright spots (signals)
         _, thresh = cv2.threshold(plot_img, 200, 255, cv2.THRESH_BINARY)
-
-        # Find contours of bright spots
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         detected_signals = []
         plot_width = plot_right - plot_left
         freq_start, freq_end = freq_range
 
-        # Map x-position to frequency (logarithmic scale)
         def x_to_freq(x):
             norm_x = x / plot_width
             log_freq = np.log10(freq_start) + norm_x * (np.log10(freq_end) - np.log10(freq_start))
             return 10 ** log_freq
 
-        # Map intensity to power (linear mapping from color intensity to dBm)
         def intensity_to_power(intensity):
             norm_intensity = intensity / 255.0
             return power_range[0] + norm_intensity * (power_range[1] - power_range[0])
@@ -135,18 +120,12 @@ def process_waterfall_image(image_data):
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
 
-            # Map x-position to frequency
             freq = x_to_freq(cx)
-
-            # Estimate power from intensity
             intensity = plot_img[cy, cx]
             power_dbm = intensity_to_power(intensity)
-
-            # Estimate bandwidth (simplified: use contour width)
             x, y, w, h = cv2.boundingRect(contour)
-            bw = (w / plot_width) * (freq_end - freq_start)  # Approximate bandwidth
+            bw = (w / plot_width) * (freq_end - freq_start)
 
-            # Classify the signal
             signal_type = classify_signal(freq, bw)
 
             detected_signals.append({
@@ -158,7 +137,6 @@ def process_waterfall_image(image_data):
                 "confidence": signal_type["confidence"]
             })
 
-        # Sort signals by frequency
         detected_signals.sort(key=lambda x: x["frequency"])
 
         return {
@@ -174,16 +152,13 @@ def process_waterfall_image(image_data):
 
 def load_scan_file(uploaded_file):
     try:
-        # Check if the file is a PNG by name or content
         is_png = False
         if hasattr(uploaded_file, 'name') and uploaded_file.name.endswith('.png'):
             is_png = True
         else:
-            # Read a small chunk to check for PNG signature
             uploaded_file.seek(0)
             header = uploaded_file.read(8)
             uploaded_file.seek(0)
-            # PNG files start with the signature: 89 50 4E 47 0D 0A 1A 0A
             if header == b'\x89PNG\r\n\x1a\n':
                 is_png = True
 
@@ -195,11 +170,9 @@ def load_scan_file(uploaded_file):
                 if line.strip():
                     return json.loads(line.strip())
         else:
-            # Try parsing as JSON
             content = uploaded_file.read().decode('utf-8')
             data = json.loads(content)
         
-            # Handle waterfall data format (if JSON/JSONL)
             if "timestamp_start" in data and "timestamp_end" in data:
                 return {
                     "timestamp": f"{data['timestamp_start']} to {data['timestamp_end']}",
@@ -210,7 +183,6 @@ def load_scan_file(uploaded_file):
             else:
                 return data
     except json.JSONDecodeError:
-        # If JSON parsing fails, assume it's a PNG if it wasn't already identified
         if not is_png:
             uploaded_file.seek(0)
             header = uploaded_file.read(8)
@@ -277,13 +249,11 @@ def classify_signal(frequency, bandwidth):
 
 def text_to_speech(text, voice="onyx"):
     try:
-        # NATO phonetic numbers
         nato_numbers = {
             '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
             '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'niner'
         }
         
-        # Process entire text as one chunk with phonetic frequency replacement
         lines = text.split('\n')
         processed_text = ""
         
@@ -306,7 +276,6 @@ def text_to_speech(text, voice="onyx"):
             else:
                 processed_text += f"{line}\n"
         
-        # Remove extra newlines and prepare as single chunk
         processed_text = processed_text.strip()
         
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
@@ -321,7 +290,7 @@ def text_to_speech(text, voice="onyx"):
             "input": processed_text,
             "voice": voice,
             "response_format": "mp3",
-            "speed": 0.95  # Default speed, adjusted inline...
+            "speed": 0.95
         }
         
         response = requests.post(
@@ -337,15 +306,12 @@ def text_to_speech(text, voice="onyx"):
                     if data_chunk:
                         f.write(data_chunk)
             
-            # Read the MP3 file and encode it as base64
             with open(temp_path, 'rb') as f:
                 audio_data = f.read()
             audio_base64 = base64.b64encode(audio_data).decode('utf-8')
             
-            # Clean up the temporary file
             os.unlink(temp_path)
             
-            # Use HTML5 audio tag to play the audio in the browser
             audio_html = f"""
             <audio controls autoplay>
                 <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
@@ -368,7 +334,6 @@ def speech_to_text():
 
 def plot_spectrum(scan_data):
     if scan_data.get("is_waterfall", False):
-        # Waterfall data: Plot a simplified spectrum based on detected signals
         fig, ax = plt.subplots(figsize=(10, 5))
         signals = scan_data.get("detected_signals", [])
         if not signals:
@@ -394,7 +359,6 @@ def plot_spectrum(scan_data):
         ax.set_title(f'RF Spectrum Waterfall: {scan_data.get("timestamp", "Unknown")}')
         ax.grid(True, alpha=0.3)
     else:
-        # Existing spectrum plot
         fig, ax = plt.subplots(figsize=(10, 5))
         freq_axis = np.array(scan_data.get("freq_axis", []))
         psd = np.array(scan_data.get("psd", []))
@@ -421,6 +385,22 @@ def plot_spectrum(scan_data):
     plt.close(fig)
     return img_str
 
+def get_available_scans(uploaded_files):
+    scans = []
+    for i, file in enumerate(uploaded_files):
+        file.seek(0)
+        scan_data = load_scan_file(file)
+        if scan_data:
+            scans.append({
+                "id": i,
+                "timestamp": scan_data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                "center_freq": scan_data.get("frequency_range", [0, 0])[0] / 1e6 if scan_data.get("is_waterfall") else scan_data.get("center_freq", 0) / 1e6,
+                "file_type": "png" if file.name.endswith('.png') else "json",
+                "scan_data": scan_data,
+                "file_content": file
+            })
+    return scans
+
 def main():
     st.markdown("""
     <style>
@@ -437,7 +417,7 @@ def main():
     
     st.markdown('<h1 class="tactical-header">DemonstRAIDR: Tactical SIGINT Analyst</h1>', unsafe_allow_html=True)
     
-     with st.sidebar:
+    with st.sidebar:
         st.header("Scan Controls")
         
         # Input for Google Drive shareable link
@@ -455,13 +435,11 @@ def main():
             with st.spinner("Downloading file from Google Drive..."):
                 file_content, file_name, raw_bytes = download_file_from_google_drive(file_url)
                 if file_content and file_name:
-                    # Create a file-like object with a name for Streamlit
                     uploaded_file_from_drive = type('UploadedFile', (), {
                         'read': lambda self: file_content.read(),
                         'seek': lambda self, pos: file_content.seek(pos),
                         'name': file_name
                     })()
-                    # Reset the file pointer after creating the object
                     file_content.seek(0)
                     uploaded_file_from_drive.seek(0)
                     uploaded_files.append(uploaded_file_from_drive)
@@ -492,8 +470,7 @@ def main():
             scan = selected_scan_data[0]
             scan_data = scan["scan_data"]
             if scan["file_type"] == "png":
-                # Display the original PNG using the raw bytes
-                st.image(scan["file_content"], use_container_width=True, caption="Original Waterfall Plot", format="PNG")
+                st.image(scan["file_content"], use_container_width=True, caption="Original Waterfall Plot")
             else:
                 img_str = plot_spectrum(scan_data)
                 if img_str:
@@ -518,7 +495,7 @@ def main():
             else:
                 st.info("No signals detected in this scan.")
         else:
-            st.info("No scans available for analysis. Please provide a valid Google Drive shareable link to a PNG file.")
+            st.info("No scans available for analysis. Please upload a PNG file or provide a valid Google Drive shareable link.")
     
     with tab2:
         st.header("RAIDR Tactical SIGINT Interface")
@@ -526,9 +503,8 @@ def main():
             context = prepare_llm_context(selected_scan_data)
             query = st.text_input("Enter tactical query:", key="text_query")
             
-            # Voice selection dropdown
             voice_options = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
-            selected_voice = st.selectbox("Select TTS Voice", voice_options, index=3)  # Default to "onyx"
+            selected_voice = st.selectbox("Select TTS Voice", voice_options, index=3)
             
             col1, col2 = st.columns([1, 1])
             with col1:
@@ -557,7 +533,7 @@ def main():
             with st.expander("Raw Spectrum Data Context"):
                 st.text(context)
         else:
-            st.info("No scans available for RAIDR analysis. Please provide a valid Google Drive shareable link to a PNG file.")
+            st.info("No scans available for RAIDR analysis. Please upload a PNG file or provide a valid Google Drive shareable link.")
 
 if 'last_response' not in st.session_state:
     st.session_state.last_response = ""
