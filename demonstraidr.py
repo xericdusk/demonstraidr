@@ -610,6 +610,9 @@ def plot_spectrum(scan_data):
             color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
             ax.plot(freq, power, 'o', markersize=8, color=color)
             ax.annotate(label, (freq, power), xytext=(0, 10), textcoords='offset points', ha='center')
+        
+        freq_range = scan_data.get("frequency_range", [0, 0])
+        ax.set_xlim(freq_range[0] / 1e6, freq_range[1] / 1e6)
         ax.set_xlabel('Frequency (MHz)')
         ax.set_ylabel('Power (dBm)')
         center_freq = scan_data.get("center_freq", 0) / 1e6
@@ -1117,12 +1120,7 @@ if 'show_response' not in st.session_state:
     st.session_state.show_response = False
 
 if __name__ == "__main__":
-    main()', ha='center')
-        
-        freq_range = scan_data.get("frequency_range", [0, 0])
-        ax.set_xlim(freq_range[0] / 1e6, freq_range[1] / 1e6)
-        ax.set_xlabel('Frequency (MHz)')
-        ax.set_ylabel('Power (dBm)')
+    main()ax.set_ylabel('Power (dBm)')
         ax.set_title(f'RF Spectrum: {scan_data.get("timestamp", "Unknown")}')
         ax.grid(True, alpha=0.3)
     else:
@@ -1138,4 +1136,5 @@ if __name__ == "__main__":
             label = signal.get("type", "unknown")
             color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
             ax.plot(freq, power, 'o', markersize=8, color=color)
-            ax.annotate(label, (freq, power), xytext=(0, 10), textcoords='offset points
+            ax.annotate(label, (freq, power), xytext=(0, 10), textcoords='offset points', ha='center')
+        ax.set_xlabel('Frequency (MHz)')
