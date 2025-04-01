@@ -16,6 +16,7 @@ import re
 import requests
 import tempfile
 import cv2  # For image processing
+import gdown  # For downloading files from Google Drive
 
 # Set page config
 st.set_page_config(
@@ -26,7 +27,11 @@ st.set_page_config(
 )
 
 # Configure OpenAI API
-openai.api_key = st.secrets["OPENAI_API_KEY"]  # Store your API key in Streamlit secrets
+try:
+    openai.api_key = st.secrets["OPENAI_API_KEY"]  # Store your API key in Streamlit secrets
+except KeyError:
+    st.error("OpenAI API key is missing. Please set the OPENAI_API_KEY in Streamlit Cloud secrets.")
+    st.stop()
 
 # Load signal database
 @st.cache_data
@@ -45,6 +50,32 @@ def load_signal_database():
     return basic_db
 
 signal_db = load_signal_database()
+
+def download_file_from_google_drive(file_url):
+    """Download a file from Google Drive using its shareable link."""
+    try:
+        # Create a temporary file to store the downloaded file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.tmp') as temp_file:
+            temp_path = temp_file.name
+            gdown.download(file_url, temp_path, quiet=False)
+        
+        # Read the file content
+        with open(temp_path, 'rb') as f:
+            file_content = f.read()
+        
+        # Clean up the temporary file
+        os.unlink(temp_path)
+        
+        # Create a file-like object for Streamlit to process
+        # Extract file name from URL or use a default
+        file_name = file_url.split('/')[-1] if '/' in file_url else "downloaded_file"
+        # If the URL is a shareable link, the file name might not be in the URL; use a default
+        if '?' in file_name:
+            file_name = "downloaded_file"
+        return io.BytesIO(file_content), file_name
+    except Exception as e:
+        st.error(f"Error downloading file from Google Drive: {str(e)}")
+        return None, None
 
 def process_waterfall_image(image_data):
     try:
@@ -289,13 +320,14 @@ def query_chatgpt(query, context):
         6. Focus on actionable intelligence, avoiding details like power, bandwidth, or confidence unless requested.
         7. Use the provided RF spectrum report to inform your response.
         """
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"{context}\n\nTACTICAL QUERY: {query}"}
-        ]
-        response = openai.ChatCompletion.create(
+        # Updated to use the new OpenAI API syntax
+        client = openai.OpenAI(api_key=openai.api_key)
+        response = client.chat.completions.create(
             model="gpt-4-turbo-preview",
-            messages=messages,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"{context}\n\nTACTICAL QUERY: {query}"}
+            ],
             max_tokens=500,
             temperature=0.7
         )
@@ -468,8 +500,36 @@ def main():
     
     with st.sidebar:
         st.header("Scan Controls")
-        st.subheader("Upload Scans")
-        uploaded_files = st.file_uploader("Upload HackRF scan data", type=["json", "jsonl", "png"], accept_multiple_files=True)
+        
+        # Option 1: Upload scans locally
+        st.subheader("Upload Scans Locally")
+        uploaded_files_local = st.file_uploader("Upload HackRF scan data", type=["json", "jsonl", "png"], accept_multiple_files=True, key="local_uploader")
+        
+        # Option 2: Fetch scans from Google Drive
+        st.subheader("Fetch Scans from Google Drive")
+        st.markdown("""
+        To fetch a scan from Google Drive:
+        1. Go to the shared folder: [DemonstRAIDR Scans](https://drive.google.com/drive/folders/1da78dTwQMNiqIc2eUDvxHTzWPp5yL2nN?usp=drive_link)
+        2. Right-click the file you want to use, click 'Share', and copy the link.
+        3. Paste the shareable link below and click 'Fetch File'.
+        """)
+        google_drive_link = st.text_input("Enter Google Drive file link:", key="google_drive_link")
+        uploaded_files_drive = []
+        if google_drive_link and st.button("Fetch File"):
+            with st.spinner("Downloading file from Google Drive..."):
+                file_content, file_name = download_file_from_google_drive(google_drive_link)
+                if file_content and file_name:
+                    # Create a file-like object with a name for Streamlit
+                    uploaded_file = type('UploadedFile', (), {
+                        'read': lambda self: file_content.read(),
+                        'seek': lambda self, pos: file_content.seek(pos),
+                        'name': file_name
+                    })()
+                    uploaded_files_drive.append(uploaded_file)
+                    st.success(f"Successfully fetched {file_name} from Google Drive.")
+        
+        # Combine local and Google Drive uploads
+        uploaded_files = uploaded_files_local + uploaded_files_drive if uploaded_files_local else uploaded_files_drive
         
         if not uploaded_files:
             st.info("Please upload one or more scans to begin analysis.")
@@ -481,7 +541,7 @@ def main():
             else:
                 scan_options = {f"{scan['id']} - {scan['timestamp'][:16]} ({scan['center_freq']} MHz) [{scan['file_type']}]": scan for scan in scans}
                 selected_scans = st.multiselect("Select scans for analysis", options=list(scan_options.keys()), default=[list(scan_options.keys())[0]] if scan_options else None)
-                selected_scan_data = [scan_options[scan] for scan in selected_scans] if selected_scans else []
+                selected_scan_data = [scan_options[scan] for scan in selected_scans]
     
     tab1, tab2 = st.tabs(["Spectrum Analyzer", "Tactical SIGINT"])
     
@@ -492,6 +552,7 @@ def main():
             scan_data = scan["scan_data"]
             if scan["file_type"] == "png":
                 # Display the original PNG
+                scan["file"].seek(0)  # Reset file pointer to the beginning
                 st.image(scan["file"], use_column_width=True, caption="Original Waterfall Plot")
             else:
                 img_str = plot_spectrum(scan_data)
@@ -539,13 +600,14 @@ def main():
                             st.session_state.show_response = True
             with col2:
                 if st.button("Voice Query"):
-                    voice_query = speech_to_text()
-                    if voice_query:
-                        st.success(f"Voice query detected: \"{voice_query}\"")
-                        with st.spinner("RAIDR processing..."):
-                            response = query_chatgpt(voice_query, context)
-                            st.session_state.last_response = response
-                            st.session_state.show_response = True
+                    with st.spinner("Listening for voice query..."):
+                        voice_query = speech_to_text()
+                        if voice_query:
+                            st.success(f"Voice query detected: \"{voice_query}\"")
+                            with st.spinner("RAIDR processing..."):
+                                response = query_chatgpt(voice_query, context)
+                                st.session_state.last_response = response
+                                st.session_state.show_response = True
             
             if st.session_state.get('show_response', False):
                 st.subheader("RAIDR Response:")
