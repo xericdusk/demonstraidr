@@ -346,7 +346,7 @@ def plot_spectrum(scan_data):
         
         for signal in signals:
             freq = signal["frequency"] / 1e6
-            power = signal.get("power_dbm", -100)
+            power = signal.get("power_dBm", -100)
             label = signal.get("type", "unknown")
             color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
             ax.plot(freq, power, 'o', markersize=8, color=color)
@@ -367,7 +367,7 @@ def plot_spectrum(scan_data):
         signals = scan_data.get("detected_signals", [])
         for signal in signals:
             freq = signal.get("frequency", 0) / 1e6
-            power = signal.get("power_dbm", -100)
+            power = signal.get("power_dBm", -100)
             label = signal.get("type", "unknown")
             color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
             ax.plot(freq, power, 'o', markersize=8, color=color)
@@ -400,6 +400,46 @@ def get_available_scans(uploaded_files):
                 "file_content": file
             })
     return scans
+
+def prepare_llm_context(selected_scan_data):
+    """Prepare context for the LLM based on selected scan data."""
+    context = "RAIDR Tactical SIGINT Analysis:\n"
+    for scan in selected_scan_data:
+        scan_data = scan["scan_data"]
+        context += f"Scan ID: {scan['id']}\n"
+        context += f"Timestamp: {scan['timestamp']}\n"
+        context += f"File Type: {scan['file_type']}\n"
+        signals = scan_data.get("detected_signals", [])
+        if signals:
+            context += "Detected Signals:\n"
+            for signal in signals:
+                context += f"- Frequency: {signal.get('frequency', 0) / 1e6:.2f} MHz, "
+                context += f"Power: {signal.get('power_dbm', 0):.2f} dBm, "
+                context += f"Bandwidth: {signal.get('bandwidth', 0) / 1e3:.2f} kHz, "
+                context += f"Type: {signal.get('type', 'unknown')}, "
+                context += f"Threat Level: {signal.get('threat_level', 'unknown')}, "
+                context += f"Confidence: {signal.get('confidence', 0):.2f}\n"
+        else:
+            context += "No signals detected.\n"
+        context += "\n"
+    return context.strip()
+
+def query_chatgpt(query, context):
+    """Query OpenAI's ChatGPT with the given context and user query."""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a tactical SIGINT analyst assistant. Provide concise, accurate responses based on the provided RF scan data."},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
+            ],
+            max_tokens=500,
+            temperature=0.7
+        )
+        return response.choices[0].message["content"].strip()
+    except Exception as e:
+        st.error(f"Error querying ChatGPT: {str(e)}")
+        return "Unable to process query due to an error."
 
 def main():
     st.markdown("""
