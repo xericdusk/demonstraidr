@@ -760,6 +760,24 @@ def query_chatgpt(query, context):
         st.error(f"Error querying ChatGPT: {str(e)}")
         return "Unable to process query."
 
+def query_advanced_analysis(query, context):
+    """Query OpenAI's GPT-4 Turbo with a simple SIGINT analyst prompt for more detailed analysis."""
+    try:
+        client = openai.OpenAI(api_key=openai.api_key)
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": "You are a SIGINT analyst."},
+                {"role": "user", "content": f"Context (scan data):\n{context}\n\nQuery: {query}"}
+            ],
+            max_tokens=1500,  # Larger response limit for detailed analysis
+            temperature=0.7
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        st.error(f"Error querying GPT-4 Turbo: {str(e)}")
+        return "Unable to process query."
+
 def main():
     st.markdown("""
     <style>
@@ -771,7 +789,51 @@ def main():
     .threat-high {color: #FF5555; font-weight: bold;}
     .threat-medium {color: #FFAA00; font-weight: bold;}
     .threat-low {color: #55FF55;}
+    
+    /* Copy button styles */
+    .copy-btn {
+        background-color: #444;
+        color: #00FF00;
+        border: none;
+        padding: 5px 10px;
+        cursor: pointer;
+        border-radius: 4px;
+        float: right;
+        margin-top: 5px;
+    }
+    .copy-btn:hover {
+        background-color: #555;
+    }
+    /* Chat message styles for Advanced Analysis */
+    .chat-container {
+        max-width: 100%;
+        margin: 0 auto;
+    }
+    .message {
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+    }
+    .user-message {
+        background-color: #2D2D2D;
+        border-left: 3px solid #00AAFF;
+    }
+    .ai-message {
+        background-color: #333333;
+        border-left: 3px solid #00FF00;
+    }
     </style>
+    <script>
+    function copyToClipboard(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('Copied to clipboard!');
+    }
+    </script>
     """, unsafe_allow_html=True)
     
     st.markdown('<h1 class="tactical-header">RAIDR: Tactical SIGINT Analyst</h1>', unsafe_allow_html=True)
@@ -833,7 +895,7 @@ def main():
                 selected_scans = st.multiselect("Select scans for analysis", options=list(scan_options.keys()), default=list(scan_options.keys()))
                 selected_scan_data = [scan_options[scan] for scan in selected_scans]
     
-    tab1, tab2 = st.tabs(["Spectrum Analyzer", "Tactical SIGINT"])
+    tab1, tab2, tab3 = st.tabs(["Spectrum Analyzer", "Tactical SIGINT", "Advanced Analysis"])
     
     with tab1:
         st.header("RF Spectrum Analysis")
@@ -932,7 +994,16 @@ def main():
             
             if st.session_state.get('show_response', False):
                 st.subheader("RAIDR Response:")
-                st.markdown(f'<div class="tactical-text">{st.session_state.last_response}</div>', unsafe_allow_html=True)
+                # Create a container for the response with a copy button
+                response_container = st.container()
+                with response_container:
+                    # Display the response
+                    st.markdown(f'<div class="tactical-text">{st.session_state.last_response}</div>', unsafe_allow_html=True)
+                    
+                    # Add a copy button
+                    js_code = f"copyToClipboard(`{st.session_state.last_response}`)"
+                    st.markdown(f'<button class="copy-btn" onclick="{js_code}">Copy to Clipboard</button>', unsafe_allow_html=True)
+                
                 if st.button("Speak Response"):
                     text_to_speech(st.session_state.last_response, selected_voice)
                     
@@ -945,6 +1016,62 @@ def main():
                 st.text(context)
         else:
             st.info("No scans available for RAIDR analysis. Please upload a file (PNG, JSON, JSONL, CSV) or provide a valid Google Drive shareable link.")
+    
+    with tab3:
+        st.header("Advanced SIGINT Analysis")
+        if 'selected_scan_data' in locals() and selected_scan_data:
+            # Use the limited context function with the max_signals parameter from the slider
+            context = prepare_llm_context(selected_scan_data, max_signals_per_scan=max_signals)
+            
+            # Initialize the chat history in session state if it doesn't exist
+            if 'advanced_chat_history' not in st.session_state:
+                st.session_state.advanced_chat_history = []
+            
+            # Display chat history
+            chat_container = st.container()
+            with chat_container:
+                for message in st.session_state.advanced_chat_history:
+                    if message["role"] == "user":
+                        st.markdown(f'<div class="message user-message">{message["content"]}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div class="message ai-message">{message["content"]}</div>', unsafe_allow_html=True)
+                        # Add copy button for AI responses
+                        js_code = f"copyToClipboard(`{message['content']}`)"
+                        st.markdown(f'<button class="copy-btn" onclick="{js_code}">Copy to Clipboard</button>', unsafe_allow_html=True)
+            
+            # User input
+            advanced_query = st.text_area("Ask your SIGINT analysis question:", height=100, 
+                                         help="Enter your question about the scan data for in-depth analysis.")
+            
+            # Send button
+            if st.button("Send for Analysis"):
+                if advanced_query:
+                    # Add user message to chat history
+                    st.session_state.advanced_chat_history.append({"role": "user", "content": advanced_query})
+                    
+                    with st.spinner("Analyzing..."):
+                        # Get response from GPT-4 Turbo with simple SIGINT analyst prompt
+                        advanced_response = query_advanced_analysis(advanced_query, context)
+                        
+                        # Add AI response to chat history
+                        st.session_state.advanced_chat_history.append({"role": "assistant", "content": advanced_response})
+                    
+                    # Rerun to display updated chat
+                    st.rerun()
+            
+            # Clear chat button
+            if st.button("Clear Conversation"):
+                st.session_state.advanced_chat_history = []
+                st.rerun()
+                
+            with st.expander("About Advanced Analysis"):
+                st.markdown("""
+                This tab provides access to a more conversational interface with GPT-4 Turbo, using a simple "SIGINT analyst" 
+                prompt without the tactical radio format constraints. Ask detailed questions about signal patterns, threat 
+                assessments, or technical analysis of the detected signals.
+                """)
+        else:
+            st.info("No scans available for advanced analysis. Please upload a file (PNG, JSON, JSONL, CSV) or provide a valid Google Drive shareable link.")
 
 if 'last_response' not in st.session_state:
     st.session_state.last_response = ""
