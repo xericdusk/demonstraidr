@@ -275,36 +275,40 @@ def classify_signal(frequency, bandwidth):
             best_match = {"type": "microwave_signal", "threat_level": "low", "confidence": 0.3}
     return best_match
 
-def get_available_scans(uploaded_files):
-    scans = []
-    for uploaded_file in uploaded_files:
-        try:
-            scan_data = load_scan_file(uploaded_file)
-            scan_id = uploaded_file.name
-            timestamp = scan_data.get("timestamp", "Unknown")
-            center_freq = scan_data.get("center_freq", 0) / 1e6
-            if "frequency_range" in scan_data:
-                center_freq = (scan_data["frequency_range"][0] + scan_data["frequency_range"][1]) / 2e6
+def text_to_speech(text, voice="onyx"):
+    try:
+        # NATO phonetic numbers
+        nato_numbers = {
+            '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
+            '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'niner'
+        }
+        
+        # Process entire text as one chunk with phonetic frequency replacement
+        lines = text.split('\n')
+        processed_text = ""
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                processed_text += "\n"
+                continue
             
-            # Read the file content for display purposes
-            uploaded_file.seek(0)
-            file_content = uploaded_file.read()
-            uploaded_file.seek(0)
-            
-            scans.append({
-                "id": scan_id,
-                "file": uploaded_file,
-                "file_content": file_content,  # Store raw bytes for display
-                "timestamp": timestamp,
-                "center_freq": center_freq,
-                "signal_count": len(scan_data.get("detected_signals", [])),
-                "file_type": uploaded_file.name.split('.')[-1].lower(),
-                "scan_data": scan_data
-            })
-        except Exception as e:
-            st.error(f"Error loading scan {uploaded_file.name}: {str(e)}")
-    scans.sort(key=lambda x: x["timestamp"], reverse=True)
-    return scans
+            if line.startswith("FREQ:"):
+                freq_str = line.split("FREQ:")[1].split("MHz")[0].strip()
+                freq_phonetic = ""
+                for char in freq_str:
+                    if char in nato_numbers:
+                        freq_phonetic += nato_numbers[char] + " "
+                    elif char == '.':
+                        freq_phonetic += "point "
+                freq_phonetic = freq_phonetic.strip()
+                processed_text += f"[SPEED:0.8] {freq_phonetic} megahertz [SPEED:0.95]\n"
+            else:
+                processed_text += f"{line}\n"
+        
+        # Remove extra newlines and prepare as single chunk
+        processed_text = processed_text.strip()
+        
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
         
@@ -317,7 +321,7 @@ def get_available_scans(uploaded_files):
             "input": processed_text,
             "voice": voice,
             "response_format": "mp3",
-            "speed": 0.95  # Default speed, adjusted inline for frequencies
+            "speed": 0.95  # Default speed, adjusted inline...
         }
         
         response = requests.post(
