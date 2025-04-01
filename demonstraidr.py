@@ -587,59 +587,146 @@ def text_to_speech(text, voice="onyx"):
         st.error(f"Text-to-speech error: {str(e)}")
         return False
 
-def plot_spectrum(scan_data):
-    if scan_data.get("is_waterfall", False) or scan_data.get("is_csv", False) or scan_data.get("is_signal_array", False):
-        fig, ax = plt.subplots(figsize=(10, 5))
-        signals = scan_data.get("detected_signals", [])
-        if not signals:
-            st.warning("No signals to plot in data.")
-            return None
+def load_scan_file(uploaded_file):
+    try:
+        result = {
+            "timestamp": "Unknown time",
+            "frequency_range": [0, 0],
+            "detected_signals": [],
+            "is_waterfall": False,
+            "is_csv": False,
+            "is_signal_array": False  # Add this for clarity
+        }
         
-        freqs = [signal["frequency"] / 1e6 for signal in signals]
-        powers = [signal.get("power_dbm", -100) for signal in signals]
-        ax.scatter(freqs, powers, c='red', label='Detected Signals')
+        file_extension = ""
+        if hasattr(uploaded_file, 'name'):
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+            st.info(f"Processing file with extension: {file_extension}")
         
-        for signal in signals:
-            freq = signal["frequency"] / 1e6
-            power = signal.get("power_dbm", -100)
-            label = signal.get("type", "unknown")
-            color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
-            ax.plot(freq, power, 'o', markersize=8, color=color)
-            ax.annotate(label, (freq, power), xytext=(0, 10), textcoords='offset points', ha='center')
-        ax.set_xlabel('Frequency (MHz)')
-        ax.set_ylabel('Power (dBm)')
-        center_freq = scan_data.get("center_freq", 0) / 1e6
-        ax.set_title(f'RF Spectrum at {center_freq} MHz')
-        ax.grid(True, alpha=0.3)
-    else:
-        # Handle IQ data case
-        fig, ax = plt.subplots(figsize=(10, 5))
-        freq_axis = np.array(scan_data.get("freq_axis", []))
-        psd = np.array(scan_data.get("psd", []))
-        if len(freq_axis) == 0 or len(psd) == 0:
-            st.warning("No frequency or PSD data available for plotting.")
-            return None
-        freq_mhz = freq_axis / 1e6
-        ax.plot(freq_mhz, 10 * np.log10(psd), 'b-', linewidth=1)
-        signals = scan_data.get("detected_signals", [])
-        for signal in signals:
-            freq = signal.get("frequency", 0) / 1e6
-            power = signal.get("power_dbm", -100)
-            label = signal.get("type", "unknown")
-            color = 'green' if signal.get("threat_level") == "low" else 'orange' if signal.get("threat_level") == "medium" else 'red'
-            ax.plot(freq, power, 'o', markersize=8, color=color)
-            ax.annotate(label, (freq, power), xytext=(0, 10), textcoords='offset points', ha='center')
-        ax.set_xlabel('Frequency (MHz)')
-        ax.set_ylabel('Power (dBm)')
-        ax.set_title(f'RF Spectrum: {scan_data.get("timestamp", "Unknown")}')
-        ax.grid(True, alpha=0.3)
-    
-    buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=100)
-    buf.seek(0)
-    img_str = base64.b64encode(buf.read()).decode('utf-8')
-    plt.close(fig)
-    return img_str
+        if file_extension == 'png' or check_file_header(uploaded_file, b'\x89PNG\r\n\x1a\n'):
+            result.update(process_waterfall_image(uploaded_file))
+            return result
+        
+        elif file_extension == 'csv':
+            result.update(process_csv_file(uploaded_file))
+            return result
+        
+        elif file_extension == 'jsonl':
+            content = uploaded_file.read().decode('utf-8')
+            for line in content.split('\n'):
+                if line.strip():
+                    data = json.loads(line.strip())
+                    result.update(data)
+                    return result
+            return result
+        
+        elif file_extension == 'json':
+            content = uploaded_file.read().decode('utf-8')
+            data = json.loads(content)
+            
+            # Check if it's a signal array format
+            if isinstance(data, list) and len(data) > 0 and "centerFreq(Hz)" in data[0]:
+                signal_data = process_json_array_signals(data)
+                if signal_data:
+                    result.update(signal_data)
+                    return result
+            
+            # Check if it's a waterfall format
+            if "timestamp_start" in data and "timestamp_end" in data:
+                result.update({
+                    "timestamp": f"{data['timestamp_start']} to {data['timestamp_end']}",
+                    "frequency_range": data.get("frequency_range", [0, 0]),
+                    "detected_signals": data.get("detected_signals", []),
+                    "is_waterfall": True
+                })
+                return result
+            
+            # Handle custom JSON format (like your file)
+            if "metadata" in data and "top_signals" in data:
+                # Extract timestamp from first signal or use current time
+                timestamp = data["top_signals"][0]["timestamp"] if data["top_signals"] else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                freq_range = [data["metadata"]["frequency_range_mhz"][0] * 1e6, data["metadata"]["frequency_range_mhz"][1] * 1e6]
+                
+                # Convert top_signals to detected_signals format
+                detected_signals = []
+                for signal in data["top_signals"]:
+                    freq_hz = signal["frequency_mhz"] * 1e6
+                    power_db = signal["power_db"]
+                    # Estimate bandwidth (default to bin_width if not specified)
+                    bandwidth = data["metadata"]["bin_width_hz"]
+                    signal_type = classify_signal(freq_hz, bandwidth)
+                    detected_signals.append({
+                        "frequency": float(freq_hz),
+                        "power_dbm": float(power_db),
+                        "bandwidth": float(bandwidth),
+                        "type": signal_type["type"],
+                        "threat_level": signal_type["threat_level"],
+                        "confidence": signal_type["confidence"]
+                    })
+                
+                result.update({
+                    "timestamp": timestamp,
+                    "frequency_range": freq_range,
+                    "detected_signals": detected_signals,
+                    "is_signal_array": True  # Treat it as a signal array for plotting
+                })
+                return result
+            
+            # Fallback: use raw data
+            result.update(data)
+            return result
+        
+        else:
+            # Existing fallback logic for unknown types
+            try:
+                uploaded_file.seek(0)
+                content_start = uploaded_file.read(1024).decode('utf-8', errors='ignore')
+                uploaded_file.seek(0)
+                
+                if content_start.strip().startswith('{') or content_start.strip().startswith('['):
+                    try:
+                        content = uploaded_file.read().decode('utf-8')
+                        data = json.loads(content)
+                        # Add the same custom JSON check here
+                        if "metadata" in data and "top_signals" in data:
+                            timestamp = data["top_signals"][0]["timestamp"] if data["top_signals"] else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            freq_range = [data["metadata"]["frequency_range_mhz"][0] * 1e6, data["metadata"]["frequency_range_mhz"][1] * 1e6]
+                            detected_signals = []
+                            for signal in data["top_signals"]:
+                                freq_hz = signal["frequency_mhz"] * 1e6
+                                power_db = signal["power_db"]
+                                bandwidth = data["metadata"]["bin_width_hz"]
+                                signal_type = classify_signal(freq_hz, bandwidth)
+                                detected_signals.append({
+                                    "frequency": float(freq_hz),
+                                    "power_dbm": float(power_db),
+                                    "bandwidth": float(bandwidth),
+                                    "type": signal_type["type"],
+                                    "threat_level": signal_type["threat_level"],
+                                    "confidence": signal_type["confidence"]
+                                })
+                            result.update({
+                                "timestamp": timestamp,
+                                "frequency_range": freq_range,
+                                "detected_signals": detected_signals,
+                                "is_signal_array": True
+                            })
+                            return result
+                        result.update(data)
+                        return result
+                    except Exception as e:
+                        st.warning(f"Failed to parse as JSON: {str(e)}")
+                # Rest of the fallback logic...
+            except Exception as e:
+                st.error(f"Error determining file type: {str(e)}")
+                return result
+                
+    except json.JSONDecodeError as e:
+        st.error(f"Invalid JSON format: {str(e)}")
+        return result
+    except Exception as e:
+        st.error(f"Error loading scan file: {str(e)}")
+        return result
 
 def get_available_scans(uploaded_files):
     scans = []
