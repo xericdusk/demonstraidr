@@ -8,5 +8,3 @@ pandas
 numpy
 matplotlib
 requests
-gdown
-google-api-python-client
