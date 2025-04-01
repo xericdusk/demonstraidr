@@ -20,7 +20,7 @@ import gdown  # For downloading files from Google Drive
 
 # Set page config
 st.set_page_config(
-    page_title="DemonstRAIDR - Tactical SIGINT Analyst",
+    page_title="RAIDR - Tactical SIGINT Analyst",
     page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -278,7 +278,7 @@ def classify_signal(frequency, bandwidth):
 def text_to_speech(text, voice="onyx"):
     try:
         lines = text.split('\n')
-        processed_text = "DemonstRAIDR, this is RAIDR. "  # Changed "Command" to "RAIDR"
+        processed_text = "This is RAIDR. "  # Simplified to "This is RAIDR"
         for line in lines:
             line = line.strip()
             if not line:
@@ -298,7 +298,7 @@ def text_to_speech(text, voice="onyx"):
                         words[i] = " ".join(nato_numbers[c] if c in nato_numbers else "Point" if c == '.' else c for c in word)
                 processed_text += " ".join(words) + ". "
         
-        processed_text += "Over and Out."  # Changed "Roger. Out." to "Over and Out"
+        processed_text += " Over and Out."  # Single "Over and Out" at the end
         
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
@@ -424,8 +424,8 @@ def get_available_scans(uploaded_files):
     return scans
 
 def prepare_llm_context(selected_scan_data):
-    """Prepare context for the LLM in tactical radio format."""
-    context = "DemonstRAIDR, this is RAIDR. SIGINT report follows.\n"  # Changed "Command" to "RAIDR"
+    """Prepare context for the LLM in tactical radio format without bandwidth or power."""
+    context = "This is RAIDR. SIGINT report follows.\n"  # Simplified to "This is RAIDR"
     for scan in selected_scan_data:
         scan_data = scan["scan_data"]
         context += f"Scan ID: {format_number(scan['id'])}. "
@@ -436,15 +436,11 @@ def prepare_llm_context(selected_scan_data):
             for signal in signals:
                 freq_mhz = signal.get('frequency', 0) / 1e6
                 context += f"Frequency {format_frequency(freq_mhz)}. "
-                context += f"Power {signal.get('power_dbm', 0):.1f} dBm. "
-                bw_khz = signal.get('bandwidth', 0) / 1e3
-                context += f"Bandwidth {format_number(int(bw_khz))} KiloHertz. "
                 context += f"Type {signal.get('type', 'unknown')}. "
-                context += f"Threat {signal.get('threat_level', 'unknown')}. "
-                context += f"Confidence {signal.get('confidence', 0):.1f}. Break. "
+                context += f"Threat {signal.get('threat_level', 'unknown')}. Break. "
         else:
             context += "No signals detected. Break. "
-    context += "Over and Out."  # Changed "Over" to "Over and Out"
+    context += "Over and Out."  # Single "Over and Out" at the end
     return context
 
 def query_chatgpt(query, context):
@@ -454,7 +450,7 @@ def query_chatgpt(query, context):
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are RAIDR, a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Identify yourself as 'RAIDR' and end with 'Over and Out'."},
+                {"role": "system", "content": "You are RAIDR, a tactical SIGINT analyst assistant. Respond in brief tactical radio format using NATO phonetic numbers and 'point' for decimals (e.g., 'One Two Five Point One Two Five' for 125.125 MHz). Identify yourself as 'RAIDR' with 'This is RAIDR' and end with 'Over and Out' once."},
                 {"role": "user", "content": f"Context:\n{context}\n\nQuery: {query}"}
             ],
             max_tokens=200,
@@ -463,7 +459,7 @@ def query_chatgpt(query, context):
         return response.choices[0].message.content.strip()
     except Exception as e:
         st.error(f"Error querying ChatGPT: {str(e)}")
-        return "DemonstRAIDR, this is RAIDR. Unable to process query. Over and Out."
+        return "This is RAIDR. Unable to process query. Over and Out."
 
 def main():
     st.markdown("""
@@ -479,7 +475,7 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    st.markdown('<h1 class="tactical-header">DemonstRAIDR: Tactical SIGINT Analyst</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="tactical-header">RAIDR: Tactical SIGINT Analyst</h1>', unsafe_allow_html=True)  # Updated title to "RAIDR"
     
     with st.sidebar:
         st.header("Scan Controls")
