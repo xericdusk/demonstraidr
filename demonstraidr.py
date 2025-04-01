@@ -258,84 +258,123 @@ def process_waterfall_image(image_data):
 
 def load_scan_file(uploaded_file):
     try:
+        # Add default fields for safety
+        result = {
+            "timestamp": "Unknown time",
+            "frequency_range": [0, 0],
+            "detected_signals": [],
+            "is_waterfall": False,
+            "is_csv": False
+        }
+        
         # Check file type by extension first
         file_extension = ""
         if hasattr(uploaded_file, 'name'):
             file_extension = uploaded_file.name.split('.')[-1].lower()
+            st.info(f"Processing file with extension: {file_extension}")
         
         # Process based on file type
         if file_extension == 'png' or check_file_header(uploaded_file, b'\x89PNG\r\n\x1a\n'):
-            return process_waterfall_image(uploaded_file)
+            result.update(process_waterfall_image(uploaded_file))
+            return result
         
         elif file_extension == 'csv':
-            return process_csv_file(uploaded_file)
+            result.update(process_csv_file(uploaded_file))
+            return result
         
         elif file_extension == 'jsonl':
             content = uploaded_file.read().decode('utf-8')
             for line in content.split('\n'):
                 if line.strip():
-                    return json.loads(line.strip())
-            return {}
+                    data = json.loads(line.strip())
+                    result.update(data)
+                    return result
+            return result
         
         elif file_extension == 'json':
             content = uploaded_file.read().decode('utf-8')
             data = json.loads(content)
             
             if "timestamp_start" in data and "timestamp_end" in data:
-                return {
+                result.update({
                     "timestamp": f"{data['timestamp_start']} to {data['timestamp_end']}",
                     "frequency_range": data.get("frequency_range", [0, 0]),
                     "detected_signals": data.get("detected_signals", []),
                     "is_waterfall": True
-                }
+                })
+                return result
             else:
-                return data
+                result.update(data)
+                return result
         
         else:
             # Try to determine file type by content
-            uploaded_file.seek(0)
-            content_start = uploaded_file.read(1024).decode('utf-8', errors='ignore')
-            uploaded_file.seek(0)
-            
-            # Check if it's JSON
-            if content_start.strip().startswith('{') or content_start.strip().startswith('['):
-                try:
-                    content = uploaded_file.read().decode('utf-8')
-                    data = json.loads(content)
-                    return data
-                except:
-                    pass
-            
-            # Check if it's JSONL
-            if '\n{' in content_start or '\n[' in content_start:
-                try:
-                    content = uploaded_file.read().decode('utf-8')
-                    for line in content.split('\n'):
-                        if line.strip():
-                            return json.loads(line.strip())
-                    return {}
-                except:
-                    pass
-                
-            # Check if it's CSV
-            if ',' in content_start and '\n' in content_start:
-                return process_csv_file(uploaded_file)
-            
-            # Last resort: try as PNG
             try:
-                return process_waterfall_image(uploaded_file)
-            except:
-                pass
-            
-            st.error("File format not supported. Please upload a PNG, JSON, JSONL, or CSV file.")
-            return {}
+                uploaded_file.seek(0)
+                content_start = uploaded_file.read(1024).decode('utf-8', errors='ignore')
+                uploaded_file.seek(0)
                 
-    except json.JSONDecodeError:
-        st.error("Invalid JSON format. Please check your file.")
-        return {}
+                # Check if it's JSON
+                if content_start.strip().startswith('{') or content_start.strip().startswith('['):
+                    try:
+                        content = uploaded_file.read().decode('utf-8')
+                        data = json.loads(content)
+                        result.update(data)
+                        return result
+                    except Exception as e:
+                        st.warning(f"Failed to parse as JSON: {str(e)}")
+                
+                # Check if it's JSONL
+                if '\n{' in content_start or '\n[' in content_start:
+                    try:
+                        content = uploaded_file.read().decode('utf-8')
+                        for line in content.split('\n'):
+                            if line.strip():
+                                data = json.loads(line.strip())
+                                result.update(data)
+                                return result
+                        return result
+                    except Exception as e:
+                        st.warning(f"Failed to parse as JSONL: {str(e)}")
+                    
+                # Check if it's CSV
+                if ',' in content_start and '\n' in content_start:
+                    csv_result = process_csv_file(uploaded_file)
+                    result.update(csv_result)
+                    return result
+                
+                # Last resort: try as PNG
+                try:
+                    png_result = process_waterfall_image(uploaded_file)
+                    result.update(png_result)
+                    return result
+                except Exception as e:
+                    st.warning(f"Failed to process as PNG: {str(e)}")
+                
+                st.error("File format not supported. Please upload a PNG, JSON, JSONL, or CSV file.")
+                return result
+            except Exception as e:
+                st.error(f"Error determining file type: {str(e)}")
+                return result
+                
+    except json.JSONDecodeError as e:
+        st.error(f"Invalid JSON format: {str(e)}")
+        return {
+            "timestamp": "Error: Invalid JSON",
+            "frequency_range": [0, 0],
+            "detected_signals": [],
+            "is_waterfall": False,
+            "is_csv": False
+        }
     except Exception as e:
         st.error(f"Error loading scan file: {str(e)}")
-        return {}
+        return {
+            "timestamp": "Error: Unknown format",
+            "frequency_range": [0, 0],
+            "detected_signals": [],
+            "is_waterfall": False,
+            "is_csv": False
+        }
 
 def check_file_header(file, header_bytes):
     """Check if a file starts with the given bytes."""
@@ -344,7 +383,9 @@ def check_file_header(file, header_bytes):
         file_start = file.read(len(header_bytes))
         file.seek(0)
         return file_start == header_bytes
-    except:
+    except Exception as e:
+        # Print debug info
+        print(f"Error checking file header: {str(e)}")
         return False
 
 def process_iq_data(iq_data, center_freq, sample_rate):
@@ -542,19 +583,46 @@ def get_available_scans(uploaded_files):
             else:
                 # Try to infer file type from content
                 file.seek(0)
-                content_start = file.read(8)
-                file.seek(0)
-                if content_start.startswith(b'\x89PNG\r\n\x1a\n'):
-                    file_type = "png"
-                elif scan_data.get("is_csv", False):
-                    file_type = "csv"
-                elif scan_data.get("is_waterfall", False):
-                    file_type = "json"
+                try:
+                    content_start = file.read(8)
+                    file.seek(0)
+                    if content_start.startswith(b'\x89PNG\r\n\x1a\n'):
+                        file_type = "png"
+                    elif scan_data.get("is_csv", False):
+                        file_type = "csv"
+                    elif scan_data.get("is_waterfall", False):
+                        file_type = "json"
+                except Exception:
+                    # If we can't read the file content directly
+                    file.seek(0)
+            
+            # Get timestamp with a safe default
+            timestamp = "Unknown"
+            if "timestamp" in scan_data:
+                timestamp = scan_data["timestamp"]
+            else:
+                try:
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
+            
+            # Calculate center frequency safely
+            try:
+                if scan_data.get("is_waterfall") or scan_data.get("is_csv", False):
+                    freq_range = scan_data.get("frequency_range", [0, 0])
+                    if isinstance(freq_range, list) and len(freq_range) > 0:
+                        center_freq = freq_range[0] / 1e6
+                    else:
+                        center_freq = 0
+                else:
+                    center_freq = scan_data.get("center_freq", 0) / 1e6
+            except Exception:
+                center_freq = 0
             
             scans.append({
                 "id": i,
-                "timestamp": scan_data.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-                "center_freq": scan_data.get("frequency_range", [0, 0])[0] / 1e6 if scan_data.get("is_waterfall") or scan_data.get("is_csv", False) else scan_data.get("center_freq", 0) / 1e6,
+                "timestamp": timestamp,
+                "center_freq": center_freq,
                 "file_type": file_type,
                 "scan_data": scan_data,
                 "file_content": file
